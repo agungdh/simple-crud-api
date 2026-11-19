@@ -6,7 +6,10 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.List;
 
 import org.springframework.stereotype.Service;
 import org.springframework.web.util.UriUtils;
@@ -14,10 +17,16 @@ import org.springframework.web.util.UriUtils;
 import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.Delete;
+import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
+import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.S3Object;
+import software.amazon.awssdk.services.s3.paginators.ListObjectsV2Iterable;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
@@ -70,6 +79,34 @@ public class StorageService {
 		s3.deleteObject(request -> request.bucket(name(bucket)).key(normalizeKey(key)));
 	}
 
+	public List<S3Object> list(Bucket bucket, String prefix) {
+		ListObjectsV2Iterable pages = s3.listObjectsV2Paginator(
+				request -> request.bucket(name(bucket)).prefix(normalizeKey(prefix)));
+		List<S3Object> objects = new ArrayList<>();
+		for (ListObjectsV2Response page : pages) {
+			objects.addAll(page.contents());
+		}
+		return objects;
+	}
+
+	public int deleteMany(Bucket bucket, Collection<String> keys) {
+		int deleted = 0;
+		List<String> allKeys = List.copyOf(keys);
+		for (int start = 0; start < allKeys.size(); start += 1000) {
+			List<ObjectIdentifier> identifiers = allKeys
+					.subList(start, Math.min(start + 1000, allKeys.size()))
+					.stream()
+					.map(key -> ObjectIdentifier.builder().key(normalizeKey(key)).build())
+					.toList();
+			s3.deleteObjects(DeleteObjectsRequest.builder()
+					.bucket(name(bucket))
+					.delete(Delete.builder().objects(identifiers).build())
+					.build());
+			deleted += identifiers.size();
+		}
+		return deleted;
+	}
+
 	public URI presignGet(Bucket bucket, String key) {
 		return presignGet(bucket, key, properties.presignExpiry());
 	}
@@ -87,9 +124,13 @@ public class StorageService {
 	}
 
 	public URI presignPut(Bucket bucket, String key, String contentType, Duration expiry) {
+		return presignPut(bucket, key, contentType, expiry, null);
+	}
+
+	public URI presignPut(Bucket bucket, String key, String contentType, Duration expiry, Long contentLength) {
 		PutObjectPresignRequest request = PutObjectPresignRequest.builder()
 				.signatureDuration(expiry)
-				.putObjectRequest(putObjectRequest(bucket, key, contentType))
+				.putObjectRequest(putObjectRequest(bucket, key, contentType, contentLength))
 				.build();
 		return URI.create(presigner.presignPutObject(request).url().toString());
 	}
@@ -110,11 +151,18 @@ public class StorageService {
 	}
 
 	private PutObjectRequest putObjectRequest(Bucket bucket, String key, String contentType) {
+		return putObjectRequest(bucket, key, contentType, null);
+	}
+
+	private PutObjectRequest putObjectRequest(Bucket bucket, String key, String contentType, Long contentLength) {
 		PutObjectRequest.Builder builder = PutObjectRequest.builder()
 				.bucket(name(bucket))
 				.key(normalizeKey(key));
 		if (contentType != null && !contentType.isBlank()) {
 			builder.contentType(contentType);
+		}
+		if (contentLength != null) {
+			builder.contentLength(contentLength);
 		}
 		return builder.build();
 	}

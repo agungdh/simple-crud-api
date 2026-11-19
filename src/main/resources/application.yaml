@@ -13,3 +13,8 @@ app:
     public-base-url: ${S3_PUBLIC_BASE_URL:http://localhost:9000/pub}
     private-bucket: ${S3_BUCKET_PRIV:priv}
     public-bucket: ${S3_BUCKET_PUB:pub}
+    temp-prefix: ${S3_TEMP_PREFIX:tmp/}
+    temp-ttl: ${S3_TEMP_TTL:15m}
+    temp-cleanup-interval: ${S3_TEMP_CLEANUP_INTERVAL:1m}
+    temp-cleanup-grace: ${S3_TEMP_CLEANUP_GRACE:30s}
+    temp-cleanup-enabled: ${S3_TEMP_CLEANUP_ENABLED:true}
