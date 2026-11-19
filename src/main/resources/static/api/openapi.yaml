@@ -1,0 +1,121 @@
+openapi: 3.0.3
+info:
+  title: Demo Upload API
+  version: 1.0.0
+  description: |
+    API untuk upload file sementara (temporary upload) ke bucket private.
+
+    Alur:
+    1. `POST /api/uploads/presign` dengan `size` file untuk mendapatkan `key`
+       dan `uploadUrl`.
+    2. Upload file langsung ke object storage dengan `PUT {uploadUrl}`.
+       `Content-Length` harus sama dengan `size` yang dikirim saat presign.
+    3. File tersimpan di `tmp/{uuid}` dan otomatis dihapus setelah 15 menit
+       jika tidak diproses lebih lanjut.
+
+    Presigned URL berlaku 15 menit.
+  contact:
+    name: Demo
+servers:
+  - url: http://localhost:8080
+    description: Local development
+security: []
+tags:
+  - name: Uploads
+    description: Presigned temporary upload
+paths:
+  /api/uploads/presign:
+    post:
+      tags:
+        - Uploads
+      summary: Membuat presigned URL untuk upload file sementara
+      description: |
+        Membuat object key sementara (`tmp/{uuid}`) dan presigned PUT URL ke
+        bucket private. Ukuran file di-sign sebagai `Content-Length`, sehingga
+        upload dengan ukuran berbeda akan ditolak oleh object storage.
+      operationId: presignUpload
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PresignUploadRequest'
+            examples:
+              image:
+                summary: Upload gambar 200 KiB
+                value:
+                  size: 204800
+      responses:
+        '200':
+          description: Presigned URL berhasil dibuat
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PresignUploadResponse'
+              examples:
+                success:
+                  value:
+                    key: tmp/d7b9c95a-4e59-43eb-8dfb-04aa42ecaaba
+                    uploadUrl: 'http://localhost:9000/priv/tmp/d7b9c95a-4e59-43eb-8dfb-04aa42ecaaba?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Date=20261119T191549Z&X-Amz-SignedHeaders=content-length%3Bhost&X-Amz-Credential=admin%2F20261119%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Expires=900&X-Amz-Signature=843a6cee46814e7af2eead4af82da6f265347c7ba860904b60fae5b81e663337'
+                    expiresIn: 900
+        '400':
+          description: Ukuran file tidak ada atau tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid:
+                  value:
+                    timestamp: '2026-11-19T19:18:27.116Z'
+                    status: 400
+                    error: Bad Request
+                    path: /api/uploads/presign
+components:
+  schemas:
+    PresignUploadRequest:
+      type: object
+      required:
+        - size
+      properties:
+        size:
+          type: integer
+          format: int64
+          minimum: 1
+          description: |
+            Ukuran file dalam byte. Nilai ini di-sign sebagai `Content-Length`,
+            jadi upload harus tepat sebesar ini.
+          example: 204800
+    PresignUploadResponse:
+      type: object
+      required:
+        - key
+        - uploadUrl
+        - expiresIn
+      properties:
+        key:
+          type: string
+          description: Key object sementara di bucket private.
+          example: tmp/d7b9c95a-4e59-43eb-8dfb-04aa42ecaaba
+        uploadUrl:
+          type: string
+          format: uri
+          description: Presigned PUT URL untuk upload file.
+        expiresIn:
+          type: integer
+          format: int64
+          description: Masa berlaku presigned URL dalam detik.
+          example: 900
+    ErrorResponse:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: integer
+          format: int32
+        error:
+          type: string
+        path:
+          type: string

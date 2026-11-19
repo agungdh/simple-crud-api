@@ -64,6 +64,20 @@ services:
       timeout: 5s
       retries: 5
 
+  openapi:
+    image: swaggerapi/swagger-ui:v5.35.1
+    restart: always
+    environment:
+      URL: http://localhost:8080/api/openapi.yaml
+      BASE_URL: /
+    ports:
+      - "127.0.0.1:8085:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   postgres_data:
   valkey_data:
