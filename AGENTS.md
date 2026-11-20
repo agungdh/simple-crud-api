@@ -11,6 +11,7 @@ Dokumen ini adalah pedoman dan instruksi utama bagi seluruh AI Agent (Claude, Ge
 - **Database**: PostgreSQL 18
 - **Cache / In-Memory Store**: Valkey 9 (Redis compatible)
 - **Object Storage**: MinIO S3 (AWS SDK for Java v2)
+- **Object Mapping**: MapStruct 1.6.3 (terintegrasi dengan Lombok)
 - **API Documentation**: OpenAPI 3.0.3 (`openapi/openapi.yaml`) disajikan via Swagger UI di port `8085`
 - **Database GUI**: Adminer di port `8083`
 - **Build Tool**: Gradle (`build.gradle.kts`)
@@ -386,7 +387,7 @@ Contoh JSON Response:
 
 Proyek ini menggunakan Lombok untuk mengeliminasi boilerplate code. Seluruh agent **wajib memanfaatkan Lombok** secara optimal dengan batasan hanya menggunakan fitur yang stabil.
 
-### 6.1. Fitur Stabil yang WAJIB Digunakan
+### 7.1. Fitur Stabil yang WAJIB Digunakan
 1. **Dependency Injection**:
    - Gunakan `@RequiredArgsConstructor` pada `@Service`, `@RestController`, `@Component`, dan `@Configuration` untuk otomatis menghasilkan constructor bagi semua field `private final`.
    - **Dilarang** menulis constructor injection boilerplate manual.
@@ -404,15 +405,139 @@ Proyek ini menggunakan Lombok untuk mengeliminasi boilerplate code. Seluruh agen
    - Java `record` tetap menjadi pilihan utama untuk immutable request/response DTO.
    - Jika membuat class DTO non-record, gunakan `@Getter`, `@Builder`, `@AllArgsConstructor`, `@NoArgsConstructor`.
 
-### 6.2. Batasan: DILARANG Menggunakan Fitur Experimental
+### 7.2. Batasan: DILARANG Menggunakan Fitur Experimental
 - **DILARANG KERAS** menggunakan anotasi dari package `lombok.experimental.*` (seperti `@UtilityClass`, `@FieldDefaults`, `@ExtensionMethod`, `@Helper`, dll.).
 - Hanya gunakan fitur inti yang stabil dan didukung secara universal oleh compiler Java 25 dan IDE plugin.
 
 ---
 
-## 8. Development & Environment Workflows
+## 8. Object Mapping Standards (MapStruct)
 
-### 6.1. Docker Services (`compose.yml`)
+Proyek ini menggunakan **MapStruct** untuk konversi dua arah antara Entity (JPA) dan DTO (Request/Response) secara compile-time (tanpa runtime reflection) dengan performa tinggi dan tetap mematuhi prinsip *information hiding*.
+
+### 8.1. Konfigurasi Standar Mapper
+- Definisikan mapper sebagai interface Spring component:
+  ```java
+  @Mapper(
+      componentModel = MappingConstants.ComponentModel.SPRING,
+      unmappedTargetPolicy = ReportingPolicy.IGNORE
+  )
+  public interface ProductMapper {
+      // ...
+  }
+  ```
+- Inject mapper ke service layer menggunakan `@RequiredArgsConstructor` (constructor injection Lombok).
+
+### 8.2. Information Hiding & Aturan Konversi
+1. **Entity ke Response DTO (Read / Query)**:
+   - Kolom `uuid` entity dipetakan langsung ke `uuid` Response DTO.
+   - Kolom `id` (bigint) internal entity **DILARANG KERAS** dipetakan ke field Response DTO manapun.
+   - Relasi foreign key: petakan relasi ke format `*_uuid` (misal: `category.uuid` dipetakan ke `categoryUuid`).
+   - Contoh mapping:
+     ```java
+     @Mapping(target = "categoryUuid", source = "category.uuid")
+     ProductResponse toResponse(Product product);
+
+     List<ProductResponse> toResponseList(List<Product> products);
+     ```
+
+2. **Request DTO ke Entity (Create / Write)**:
+   - Kolom `id` (bigint) internal **WAJIB di-ignore**: `@Mapping(target = "id", ignore = true)`. Nilai `id` hanya digenerate oleh sequence PostgreSQL identity.
+   - Kolom `uuid` entitas digenerate di sisi aplikasi (atau default DB), jangan diambil dari client: `@Mapping(target = "uuid", ignore = true)`.
+   - Kolom audit (`createdAt`, `createdBy`, `updatedAt`, `updatedBy`, `deletedAt`, `deletedBy`) **WAJIB di-ignore**: nilainya diisi eksplisit oleh context service aplikasi.
+   - Relasi foreign key: DTO mengirimkan `categoryUuid`. Service me-resolve `categoryUuid` menjadi `categoryId` internal, lalu mengisikannya ke entity.
+   - Contoh mapping:
+     ```java
+     @Mapping(target = "id", ignore = true)
+     @Mapping(target = "uuid", ignore = true)
+     @Mapping(target = "categoryId", ignore = true)
+     @Mapping(target = "createdAt", ignore = true)
+     @Mapping(target = "createdBy", ignore = true)
+     @Mapping(target = "updatedAt", ignore = true)
+     @Mapping(target = "updatedBy", ignore = true)
+     @Mapping(target = "deletedAt", ignore = true)
+     @Mapping(target = "deletedBy", ignore = true)
+     Product toEntity(CreateProductRequest request);
+     ```
+
+3. **Update Entity dari Request DTO (`@MappingTarget`)**:
+   - Untuk operasi update parsial/penuh, gunakan anotasi `@MappingTarget`:
+     ```java
+     @Mapping(target = "id", ignore = true)
+     @Mapping(target = "uuid", ignore = true)
+     @Mapping(target = "categoryId", ignore = true)
+     @Mapping(target = "createdAt", ignore = true)
+     @Mapping(target = "createdBy", ignore = true)
+     @Mapping(target = "updatedAt", ignore = true)
+     @Mapping(target = "updatedBy", ignore = true)
+     @Mapping(target = "deletedAt", ignore = true)
+     @Mapping(target = "deletedBy", ignore = true)
+     @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
+     void updateEntityFromRequest(UpdateProductRequest request, @MappingTarget Product product);
+     ```
+
+### 8.3. Integrasi MapStruct & Lombok
+- Agar MapStruct dapat membaca code yang dihasilkan Lombok (getter, setter, builder), library `lombok-mapstruct-binding` **wajib** didaftarkan di `annotationProcessor` `build.gradle.kts`.
+- Urutan registrasi `annotationProcessor` pada Gradle:
+  1. `org.projectlombok:lombok`
+  2. `org.projectlombok:lombok-mapstruct-binding:0.2.0`
+  3. `org.mapstruct:mapstruct-processor:1.6.3`
+  4. `org.springframework.boot:spring-boot-configuration-processor`
+
+### 8.4. Pola Service Layer dengan MapStruct
+```java
+@Service
+@RequiredArgsConstructor
+public class ProductService {
+
+    private final ProductRepository productRepository;
+    private final CategoryRepository categoryRepository;
+    private final ProductMapper productMapper;
+
+    @Transactional
+    public ProductResponse createProduct(CreateProductRequest request, Long currentUserId) {
+        // 1. Resolve categoryUuid ke categoryId internal
+        Long categoryId = categoryRepository.findIdByUuid(request.categoryUuid())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Kategori tidak ditemukan"));
+
+        Instant now = Instant.now();
+
+        // 2. Map DTO ke Entity via MapStruct
+        Product product = productMapper.toEntity(request);
+        product.setUuid(UUID.randomUUID());
+        product.setCategoryId(categoryId);
+        product.setCreatedAt(now);
+        product.setCreatedBy(currentUserId);
+        product.setUpdatedAt(now);
+        product.setUpdatedBy(currentUserId);
+
+        productRepository.save(product);
+
+        // 3. Map Entity ke Response DTO via MapStruct
+        return productMapper.toResponse(product);
+    }
+
+    @Transactional
+    public ProductResponse updateProduct(UUID productUuid, UpdateProductRequest request, Long currentUserId) {
+        Product product = productRepository.findByUuidAndDeletedAtIsNull(productUuid)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Produk tidak ditemukan"));
+
+        // Update atribut entity dari Request DTO via MapStruct
+        productMapper.updateEntityFromRequest(request, product);
+        product.setUpdatedAt(Instant.now());
+        product.setUpdatedBy(currentUserId);
+
+        productRepository.save(product);
+        return productMapper.toResponse(product);
+    }
+}
+```
+
+---
+
+## 9. Development & Environment Workflows
+
+### 9.1. Docker Services (`compose.yml`)
 - Jalankan semua service pendukung (Postgres, Valkey, MinIO, Adminer, Swagger UI):
   ```bash
   docker compose up -d
@@ -422,7 +547,7 @@ Proyek ini menggunakan Lombok untuk mengeliminasi boilerplate code. Seluruh agen
   docker compose ps
   ```
 
-### 6.2. Port Referensi
+### 9.2. Port Referensi
 | Service | Host Port | Internal Port | Keterangan |
 |---|---|---|---|
 | Spring Boot App | `8080` | `8080` | Aplikasi backend utama |
@@ -433,7 +558,7 @@ Proyek ini menggunakan Lombok untuk mengeliminasi boilerplate code. Seluruh agen
 | Adminer | `8083` | `8080` | Web UI PostgreSQL |
 | Swagger UI | `8085` | `8080` | OpenAPI spec viewer |
 
-### 6.3. OpenAPI Specification
+### 9.3. OpenAPI Specification
 - Lokasi spec: `openapi/openapi.yaml`
 - Sinkronisasi otomatis ke Swagger UI:
   ```bash
@@ -444,7 +569,7 @@ Proyek ini menggunakan Lombok untuk mengeliminasi boilerplate code. Seluruh agen
   make openapi-sync
   ```
 
-### 6.4. Build & Testing
+### 9.4. Build & Testing
 - Menjalankan seluruh test:
   ```bash
   ./gradlew test
@@ -460,13 +585,14 @@ Proyek ini menggunakan Lombok untuk mengeliminasi boilerplate code. Seluruh agen
 
 ---
 
-## 9. Coding & Git Rules for Agents
+## 10. Coding & Git Rules for Agents
 1. **No ID Leakage**: Selalu review seluruh DTO dan Controller agar tidak ada `Long id` atau `id` internal (termasuk `created_by`, `updated_by`, `deleted_by`) yang bocor keluar API. Selalu gunakan `*_uuid`.
 2. **Audit Columns Handled by App**: Semua kolom audit (`created_at`, `created_by`, `updated_at`, `updated_by`, `deleted_at`, `deleted_by`) harus nullable, tanpa DB default, dan nilainya diisi eksplisit oleh aplikasi.
 3. **Soft Delete & Partial Unique Indexes**: Setiap constraint unique wajib memakai partial index `WHERE deleted_at IS NULL`.
 4. **SQL Restrict & Soft Delete Isolation**: Seluruh foreign key wajib `ON DELETE RESTRICT`. Pada entity class gunakan `@SQLRestriction("deleted_at IS NULL")` agar record yang di-soft delete tidak pernah bocor/tampil pada query aplikasi.
 5. **Consistent Lombok Usage**: Wajib manfaatkan fitur Lombok yang stabil (`@RequiredArgsConstructor`, `@Slf4j`, `@Getter`, `@Setter`, `@Builder`, dll.) untuk mereduksi boilerplate. Dilarang memakai package `lombok.experimental.*`.
-6. **Cursor Pagination by Default**: Seluruh endpoint list data wajib mengimplementasikan cursor pagination dengan parameter `?after={uuid}` (default sort: `id DESC`). Dilarang menggunakan offset pagination atau membocorkan internal ID.
-7. **Consistent Symlinks**: File `CLAUDE.md` dan `GEMINI.md` adalah symlink yang menunjuk ke `AGENTS.md`. Jangan ubah symlink menjadi file terpisah.
-8. **OpenAPI First / Synced**: Setiap perubahan endpoint API wajib dicerminkan pada `openapi/openapi.yaml`.
-9. **Clean Git Commits**: Buat commit message yang jelas, deskriptif, dan fokus pada satu lingkup perubahan.
+6. **MapStruct for Entity-DTO Mapping**: Wajib menggunakan interface MapStruct dengan `componentModel = MappingConstants.ComponentModel.SPRING` (atau `"spring"`) untuk konversi Entity <-> DTO. Selalu abaikan internal ID dan kolom audit dari DTO ke Entity.
+7. **Cursor Pagination by Default**: Seluruh endpoint list data wajib mengimplementasikan cursor pagination dengan parameter `?after={uuid}` (default sort: `id DESC`). Dilarang menggunakan offset pagination atau membocorkan internal ID.
+8. **Consistent Symlinks**: File `CLAUDE.md` dan `GEMINI.md` adalah symlink yang menunjuk ke `AGENTS.md`. Jangan ubah symlink menjadi file terpisah.
+9. **OpenAPI First / Synced**: Setiap perubahan endpoint API wajib dicerminkan pada `openapi/openapi.yaml`.
+10. **Clean Git Commits**: Buat commit message yang jelas, deskriptif, dan fokus pada satu lingkup perubahan.
