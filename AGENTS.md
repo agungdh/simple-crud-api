@@ -93,7 +93,7 @@ Setiap tabel entitas utama wajib memiliki 6 kolom audit standar berikut:
 2. **Tanpa Nilai Default DB**:
    - **DILARANG** menambahkan `DEFAULT CURRENT_TIMESTAMP` atau default trigger di database.
    - Seluruh nilai audit **wajib diisi oleh aplikasi**.
-   - **Timestamp `created_at` / `updated_at`** diisi otomatis lewat JPA lifecycle callback `@PrePersist` / `@PreUpdate` pada entity — **bukan** di-set manual di service layer.
+   - **Timestamp** diisi otomatis lewat JPA lifecycle callback pada entity — **bukan** di-set manual di service layer. Setiap operasi hanya mengisi kolomnya sendiri: create mengisi `created_at`, update mengisi `updated_at`, soft delete mengisi `deleted_at`.
    - **Kolom `*_by`** (`created_by`, `updated_by`, `deleted_by`) diisi dari principal user yang sedang login. Selama mekanisme autentikasi/login belum tersedia, kolom ini dibiarkan `NULL` dan tidak dipaksakan.
    - *Tujuan*: Memudahkan audit internal, aman ketika import data massal / migrasi data historis tanpa tertimpa default clock database.
 3. **Information Hiding untuk `*_by`**:
@@ -101,27 +101,25 @@ Setiap tabel entitas utama wajib memiliki 6 kolom audit standar berikut:
    - Jika informasi pembuat/pengubah perlu dikirim ke Frontend / API, **DILARANG** mengekspos bigint tersebut. Wajib di-resolve dan diekspos sebagai `created_by_uuid`, `updated_by_uuid`, atau `deleted_by_uuid`.
 
 ### 3.2.1. Penerapan Timestamp Audit via JPA Lifecycle Callback
-- `created_at` dan `updated_at` diisi otomatis oleh entity melalui `@PrePersist`, lalu `updated_at` di-refresh oleh `@PreUpdate`.
-- Service layer **tidak boleh** memanggil `setCreatedAt(...)` / `setUpdatedAt(...)`.
+- Setiap operasi hanya mengisi timestamp miliknya sendiri: **create → `created_at`**, **update → `updated_at`**, **soft delete → `deleted_at`**.
+- `created_at` diisi via `@PrePersist`. `updated_at` diisi via `@PreUpdate` dan **tidak** boleh diubah saat operasi soft delete.
+- Service layer **tidak boleh** memanggil `setCreatedAt(...)` / `setUpdatedAt(...)`; `deleted_at` di-set eksplisit di service karena ditentukan oleh aksi bisnis.
 - Contoh:
   ```java
   @PrePersist
   void prePersist() {
-      Instant now = Instant.now();
       if (createdAt == null) {
-          createdAt = now;
-      }
-      if (updatedAt == null) {
-          updatedAt = now;
+          createdAt = Instant.now();
       }
   }
 
   @PreUpdate
   void preUpdate() {
-      updatedAt = Instant.now();
+      if (deletedAt == null) {
+          updatedAt = Instant.now();
+      }
   }
   ```
-- `deleted_at` tetap di-set eksplisit di service saat operasi soft delete, karena nilainya ditentukan oleh aksi bisnis dan bukan oleh siklus persist/update biasa.
 
 ### 3.3. Soft Delete & Partial Unique Index
 Karena sistem menggunakan **Soft Delete** (`deleted_at IS NULL` menandakan data aktif):
