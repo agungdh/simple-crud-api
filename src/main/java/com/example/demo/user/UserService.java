@@ -28,12 +28,9 @@ public class UserService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Username sudah digunakan");
         }
 
-        Instant now = Instant.now();
         User user = userMapper.toEntity(request);
         user.setUuid(UUID.randomUUID());
         user.setPassword(passwordEncoder.encode(request.password()));
-        user.setCreatedAt(now);
-        user.setUpdatedAt(now);
 
         userRepository.save(user);
         return userMapper.toResponse(user);
@@ -88,7 +85,6 @@ public class UserService {
         if (request.password() != null && !request.password().isBlank()) {
             user.setPassword(passwordEncoder.encode(request.password()));
         }
-        user.setUpdatedAt(Instant.now());
 
         userRepository.save(user);
         return userMapper.toResponse(user);
