@@ -99,6 +99,26 @@ Karena sistem menggunakan **Soft Delete** (`deleted_at IS NULL` menandakan data 
   - Data yang sudah di-soft delete (`deleted_at IS NOT NULL`) tidak menghalangi penambahan data baru dengan nilai identik.
   - Mempercepat query query filter aktif (`WHERE deleted_at IS NULL AND <column> = :val`).
 
+### 3.4. SQL Restrict & Query Filtering Standards
+1. **Foreign Key `ON DELETE RESTRICT`**:
+   - Seluruh relasi fisik Foreign Key di DDL basis data **wajib** menggunakan `ON DELETE RESTRICT` (dilarang `ON DELETE CASCADE` atau `ON DELETE SET NULL`).
+   - Mencegah physical hard delete yang tidak disengaja. Integritas referensial data historis dan relasi anak tetap terjaga di level database.
+2. **Query Level Restriction (`@SQLRestriction`)**:
+   - Karena data yang sudah di-soft delete (`deleted_at IS NOT NULL`) **tidak boleh ditampilkan ke luar**, gunakan mekanisme restrict di layer query/persistence.
+   - Pada layer entity (Spring Data JPA / Hibernate 6+), **wajib** menggunakan anotasi `@SQLRestriction("deleted_at IS NULL")` pada class entity:
+     ```java
+     @Entity
+     @Table(name = "products")
+     @SQLRestriction("deleted_at IS NULL")
+     public class Product {
+         // ...
+     }
+     ```
+   - **Keuntungan**:
+     - Setiap query (baik `findById`, `findAll`, maupun relasi `@ManyToOne` / eager / lazy loading) secara otomatis di-filter oleh Hibernate dengan `AND deleted_at IS NULL`.
+     - Menghindari human error lupa menambahkan filter `deleted_at IS NULL` di repository queries.
+   - Jika menggunakan native query / JDBC Client / MyBatis, query wajib selalu menyertakan filter `WHERE deleted_at IS NULL`.
+
 ---
 
 ## 4. Schema DDL Pattern Example
@@ -444,8 +464,9 @@ Proyek ini menggunakan Lombok untuk mengeliminasi boilerplate code. Seluruh agen
 1. **No ID Leakage**: Selalu review seluruh DTO dan Controller agar tidak ada `Long id` atau `id` internal (termasuk `created_by`, `updated_by`, `deleted_by`) yang bocor keluar API. Selalu gunakan `*_uuid`.
 2. **Audit Columns Handled by App**: Semua kolom audit (`created_at`, `created_by`, `updated_at`, `updated_by`, `deleted_at`, `deleted_by`) harus nullable, tanpa DB default, dan nilainya diisi eksplisit oleh aplikasi.
 3. **Soft Delete & Partial Unique Indexes**: Setiap constraint unique wajib memakai partial index `WHERE deleted_at IS NULL`.
-4. **Consistent Lombok Usage**: Wajib manfaatkan fitur Lombok yang stabil (`@RequiredArgsConstructor`, `@Slf4j`, `@Getter`, `@Setter`, `@Builder`, dll.) untuk mereduksi boilerplate. Dilarang memakai package `lombok.experimental.*`.
-5. **Cursor Pagination by Default**: Seluruh endpoint list data wajib mengimplementasikan cursor pagination dengan parameter `?after={uuid}` (default sort: `id DESC`). Dilarang menggunakan offset pagination atau membocorkan internal ID.
-6. **Consistent Symlinks**: File `CLAUDE.md` dan `GEMINI.md` adalah symlink yang menunjuk ke `AGENTS.md`. Jangan ubah symlink menjadi file terpisah.
-7. **OpenAPI First / Synced**: Setiap perubahan endpoint API wajib dicerminkan pada `openapi/openapi.yaml`.
-8. **Clean Git Commits**: Buat commit message yang jelas, deskriptif, dan fokus pada satu lingkup perubahan.
+4. **SQL Restrict & Soft Delete Isolation**: Seluruh foreign key wajib `ON DELETE RESTRICT`. Pada entity class gunakan `@SQLRestriction("deleted_at IS NULL")` agar record yang di-soft delete tidak pernah bocor/tampil pada query aplikasi.
+5. **Consistent Lombok Usage**: Wajib manfaatkan fitur Lombok yang stabil (`@RequiredArgsConstructor`, `@Slf4j`, `@Getter`, `@Setter`, `@Builder`, dll.) untuk mereduksi boilerplate. Dilarang memakai package `lombok.experimental.*`.
+6. **Cursor Pagination by Default**: Seluruh endpoint list data wajib mengimplementasikan cursor pagination dengan parameter `?after={uuid}` (default sort: `id DESC`). Dilarang menggunakan offset pagination atau membocorkan internal ID.
+7. **Consistent Symlinks**: File `CLAUDE.md` dan `GEMINI.md` adalah symlink yang menunjuk ke `AGENTS.md`. Jangan ubah symlink menjadi file terpisah.
+8. **OpenAPI First / Synced**: Setiap perubahan endpoint API wajib dicerminkan pada `openapi/openapi.yaml`.
+9. **Clean Git Commits**: Buat commit message yang jelas, deskriptif, dan fokus pada satu lingkup perubahan.
