@@ -7,7 +7,7 @@ Dokumen ini adalah pedoman dan instruksi utama bagi seluruh AI Agent (Claude, Ge
 ## 1. Project Overview & Tech Stack
 
 - **Platform / Runtime**: Java 25
-- **Framework**: Spring Boot 4.1.2 (WebMvc, Validation, Lombok, `spring-security-crypto` untuk BCrypt)
+- **Framework**: Spring Boot 4.2.0 (WebMvc, Validation, Lombok, `spring-security-crypto` untuk BCrypt)
 - **Database**: PostgreSQL 18 (dengan ekstensi `pg_trgm` untuk pencarian teks)
 - **Cache / In-Memory Store**: Valkey 9 (Redis compatible)
 - **Object Storage**: MinIO S3 (AWS SDK for Java v2)
