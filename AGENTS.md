@@ -272,7 +272,14 @@ WHERE deleted_at IS NULL;
 
 ## 5. DTO & Model Code Patterns
 
-### 5.1. Request DTO
+### 5.0. Aturan Wajib DTO — Harus `record`
+- Seluruh Request DTO dan Response DTO **WAJIB** berupa Java `record` (immutable).
+- **DILARANG** membuat DTO sebagai class biasa, termasuk class dengan `@Getter` / `@Builder` / `@NoArgsConstructor` / `@AllArgsConstructor`.
+- **DILARANG** memakai anotasi Lombok pada `record` (`@Data`, `@Getter`, `@Builder`, `@Value`, dll.). Gunakan constructor kanonik, accessor `field()`, dan component record secara langsung.
+- Validasi request memakai anotasi Jakarta Bean Validation langsung pada component `record`.
+- DTO tidak boleh berisi logika bisnis; hanya kontrak data masuk/keluar.
+
+### 5.1. Request DTO (Wajib `record`)
 ```java
 public record CreateProductRequest(
     @NotBlank
@@ -291,7 +298,7 @@ public record CreateProductRequest(
 ) {}
 ```
 
-### 5.2. Response DTO
+### 5.2. Response DTO (Wajib `record`)
 ```java
 public record ProductResponse(
     // Menggunakan uuid, id bigint internal TIDAK BOLEH diekspos
@@ -493,8 +500,8 @@ Proyek ini menggunakan Lombok untuk mengeliminasi boilerplate code. Seluruh agen
    - Gunakan `@ToString(exclude = ...)` untuk mencegah circular reference pada relasi.
    - Gunakan `@EqualsAndHashCode(onlyExplicitlyIncluded = true)` dengan `@EqualsAndHashCode.Include` hanya pada field `uuid`.
 4. **DTO**:
-   - Java `record` tetap menjadi pilihan utama untuk immutable request/response DTO.
-   - Jika membuat class DTO non-record, gunakan `@Getter`, `@Builder`, `@AllArgsConstructor`, `@NoArgsConstructor`.
+   - Seluruh Request dan Response DTO **WAJIB** menggunakan Java `record` (immutable) — lihat bagian 5.0.
+   - **DILARANG** membuat DTO sebagai class biasa, dan **DILARANG** memakai anotasi Lombok pada `record` (`@Data`, `@Getter`, `@Builder`, `@Value`, dll.).
 
 ### 7.2. Batasan: DILARANG Menggunakan Fitur Experimental
 - **DILARANG KERAS** menggunakan anotasi dari package `lombok.experimental.*` (seperti `@UtilityClass`, `@FieldDefaults`, `@ExtensionMethod`, `@Helper`, dll.).
@@ -519,7 +526,41 @@ Proyek ini menggunakan **MapStruct** untuk konversi dua arah antara Entity (JPA)
   ```
 - Inject mapper ke service layer menggunakan `@RequiredArgsConstructor` (constructor injection Lombok).
 
-### 8.2. Information Hiding & Aturan Konversi
+### 8.2. Konversi Dua Arah (Wajib) & Information Hiding
+- **Setiap mapper WAJIB mendukung konversi dua arah dalam satu interface**:
+  - **Read / Outbound**: `Entity → Response DTO` (misal `toResponse`, `toResponseList`).
+  - **Write / Inbound**: `Request DTO → Entity` (misal `toEntity`) dan/atau `Request DTO → Entity` via `@MappingTarget` untuk update (`updateEntityFromRequest`).
+- **DILARANG** membuat mapper yang hanya satu arah (hanya `Entity → Response`) lalu melakukan mapping manual di service. Seluruh konversi Entity <-> DTO wajib melewati mapper.
+- **DILARANG** memecah inbound dan outbound ke mapper terpisah untuk entitas yang sama; gabungkan keduanya di satu interface.
+- Contoh interface mapper dua arah:
+  ```java
+  @Mapper(
+      componentModel = MappingConstants.ComponentModel.SPRING,
+      unmappedTargetPolicy = ReportingPolicy.IGNORE
+  )
+  public interface ProductMapper {
+
+      // Entity -> Response DTO (Read)
+      @Mapping(target = "categoryUuid", source = "category.uuid")
+      ProductResponse toResponse(Product product);
+
+      List<ProductResponse> toResponseList(List<Product> products);
+
+      // Request DTO -> Entity (Write)
+      @Mapping(target = "id", ignore = true)
+      @Mapping(target = "uuid", ignore = true)
+      @Mapping(target = "categoryId", ignore = true)
+      @Mapping(target = "searchText", ignore = true)
+      @Mapping(target = "createdAt", ignore = true)
+      @Mapping(target = "createdBy", ignore = true)
+      @Mapping(target = "updatedAt", ignore = true)
+      @Mapping(target = "updatedBy", ignore = true)
+      @Mapping(target = "deletedAt", ignore = true)
+      @Mapping(target = "deletedBy", ignore = true)
+      Product toEntity(CreateProductRequest request);
+  }
+  ```
+
 1. **Entity ke Response DTO (Read / Query)**:
    - Kolom `uuid` entity dipetakan langsung ke `uuid` Response DTO.
    - Kolom `id` (bigint) internal entity **DILARANG KERAS** dipetakan ke field Response DTO manapun.
@@ -542,6 +583,7 @@ Proyek ini menggunakan **MapStruct** untuk konversi dua arah antara Entity (JPA)
      @Mapping(target = "id", ignore = true)
      @Mapping(target = "uuid", ignore = true)
      @Mapping(target = "categoryId", ignore = true)
+     @Mapping(target = "searchText", ignore = true)
      @Mapping(target = "createdAt", ignore = true)
      @Mapping(target = "createdBy", ignore = true)
      @Mapping(target = "updatedAt", ignore = true)
@@ -557,6 +599,7 @@ Proyek ini menggunakan **MapStruct** untuk konversi dua arah antara Entity (JPA)
      @Mapping(target = "id", ignore = true)
      @Mapping(target = "uuid", ignore = true)
      @Mapping(target = "categoryId", ignore = true)
+     @Mapping(target = "searchText", ignore = true)
      @Mapping(target = "createdAt", ignore = true)
      @Mapping(target = "createdBy", ignore = true)
      @Mapping(target = "updatedAt", ignore = true)
@@ -682,7 +725,7 @@ public class ProductService {
 3. **Soft Delete & Partial Unique Indexes**: Setiap constraint unique wajib memakai partial index `WHERE deleted_at IS NULL`.
 4. **SQL Restrict & Soft Delete Isolation**: Seluruh foreign key wajib `ON DELETE RESTRICT`. Pada entity class gunakan `@SQLRestriction("deleted_at IS NULL")` agar record yang di-soft delete tidak pernah bocor/tampil pada query aplikasi.
 5. **Consistent Lombok Usage**: Wajib manfaatkan fitur Lombok yang stabil (`@RequiredArgsConstructor`, `@Slf4j`, `@Getter`, `@Setter`, `@Builder`, dll.) untuk mereduksi boilerplate. Dilarang memakai package `lombok.experimental.*`.
-6. **MapStruct for Entity-DTO Mapping**: Wajib menggunakan interface MapStruct dengan `componentModel = MappingConstants.ComponentModel.SPRING` (atau `"spring"`) untuk konversi Entity <-> DTO. Selalu abaikan internal ID dan kolom audit dari DTO ke Entity.
+6. **MapStruct for Entity-DTO Mapping**: Wajib menggunakan interface MapStruct dengan `componentModel = MappingConstants.ComponentModel.SPRING` (atau `"spring"`) untuk konversi Entity <-> DTO. Setiap mapper **wajib dua arah dalam satu interface**: `Entity → Response DTO` (`toResponse`) dan `Request DTO → Entity` (`toEntity` / `updateEntityFromRequest`). Selalu abaikan internal ID dan kolom audit dari DTO ke Entity.
 7. **Cursor Pagination by Default**: Seluruh endpoint list data wajib mengimplementasikan cursor pagination dengan parameter `?after={uuid}` (default sort: `id DESC`). Dilarang menggunakan offset pagination atau membocorkan internal ID.
 8. **Virtual Column Trigram Index for Search**: Karena pencarian teks dapat mencakup banyak kolom, setiap tabel wajib mendefinisikan 1 kolom virtual/generated `search_text TEXT GENERATED ALWAYS AS (...) STORED` yang menggabungkan seluruh field teks pencarian. Buat 1 GIN index dengan `gin_trgm_ops` pada kolom `search_text` dengan klausa `WHERE deleted_at IS NULL`. Query pencarian di repository wajib mengarahkan operator `ILIKE` ke field `searchText`. Dilarang memakai derived query `ContainingIgnoreCase` atau `LOWER(column)` yang mematikan GIN index scan.
 9. **Consistent Symlinks**: File `CLAUDE.md` dan `GEMINI.md` adalah symlink yang menunjuk ke `AGENTS.md`. Jangan ubah symlink menjadi file terpisah.
