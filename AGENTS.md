@@ -59,9 +59,51 @@ Dokumen ini adalah pedoman dan instruksi utama bagi seluruh AI Agent (Claude, Ge
 
 ---
 
-## 3. Schema DDL Pattern Example
+## 3. Audit Columns & Soft Delete Standards
 
-Berikut adalah contoh standar DDL untuk setiap tabel baru:
+### 3.1. Audit Columns Specification
+Setiap tabel entitas utama wajib memiliki 6 kolom audit standar berikut:
+
+| Kolom | Tipe Data | Nullable | Default DB | Keterangan |
+|---|---|---|---|---|
+| `created_at` | `TIMESTAMPTZ` | `YES` (NULL) | *Tidak ada* | Waktu pembuatan record |
+| `created_by` | `BIGINT` | `YES` (NULL) | *Tidak ada* | ID user pembuat (`id` internal) |
+| `updated_at` | `TIMESTAMPTZ` | `YES` (NULL) | *Tidak ada* | Waktu update terakhir |
+| `updated_by` | `BIGINT` | `YES` (NULL) | *Tidak ada* | ID user pengubah (`id` internal) |
+| `deleted_at` | `TIMESTAMPTZ` | `YES` (NULL) | *Tidak ada* | Waktu soft delete |
+| `deleted_by` | `BIGINT` | `YES` (NULL) | *Tidak ada* | ID user penghapus (`id` internal) |
+
+### 3.2. Aturan Penting Audit Columns
+1. **Semua Kolom Nullable**: Kolom audit dibuat tanpa `NOT NULL`.
+2. **Tanpa Nilai Default DB**:
+   - **DILARANG** menambahkan `DEFAULT CURRENT_TIMESTAMP` atau default trigger di database.
+   - Seluruh nilai audit **wajib diisi oleh aplikasi** (Spring Boot service layer / auditing listener / context).
+   - *Tujuan*: Memudahkan audit internal, aman ketika import data massal / migrasi data historis tanpa tertimpa default clock database.
+3. **Information Hiding untuk `*_by`**:
+   - Kolom `created_by`, `updated_by`, dan `deleted_by` menyimpan `BIGINT` (merujuk ke `id` internal user).
+   - Jika informasi pembuat/pengubah perlu dikirim ke Frontend / API, **DILARANG** mengekspos bigint tersebut. Wajib di-resolve dan diekspos sebagai `created_by_uuid`, `updated_by_uuid`, atau `deleted_by_uuid`.
+
+### 3.3. Soft Delete & Partial Unique Index
+Karena sistem menggunakan **Soft Delete** (`deleted_at IS NULL` menandakan data aktif):
+- **DILARANG** menggunakan unique constraint standar tabel (`CONSTRAINT uq_name UNIQUE (column)`).
+  *Alasan*: Di Postgres, unique constraint standar akan memicu error konflik jika record yang sudah dihapus (soft-deleted) dibuat kembali dengan nilai kolom yang sama.
+- **WAJIB menggunakan Partial Unique Index**:
+  Gunakan filtered index dengan klausa `WHERE deleted_at IS NULL` untuk setiap kolom yang memerlukan keunikan data bisnis:
+  ```sql
+  CREATE UNIQUE INDEX idx_<table_name>_<column>_unique_active 
+  ON <table_name> (<column>) 
+  WHERE deleted_at IS NULL;
+  ```
+- **Manfaat**:
+  - Hanya data yang aktif yang dicek keunikannya.
+  - Data yang sudah di-soft delete (`deleted_at IS NOT NULL`) tidak menghalangi penambahan data baru dengan nilai identik.
+  - Mempercepat query query filter aktif (`WHERE deleted_at IS NULL AND <column> = :val`).
+
+---
+
+## 4. Schema DDL Pattern Example
+
+Berikut adalah contoh standar DDL lengkap untuk tabel baru yang mengimplementasikan seluruh standar di atas:
 
 ```sql
 -- 1. Tabel Utama (contoh: categories)
@@ -69,12 +111,24 @@ CREATE TABLE categories (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     uuid UUID NOT NULL DEFAULT gen_random_uuid(),
     name VARCHAR(100) NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    slug VARCHAR(120) NOT NULL,
+
+    -- Kolom Audit (semua nullable, tanpa default DB)
+    created_at TIMESTAMPTZ,
+    created_by BIGINT,
+    updated_at TIMESTAMPTZ,
+    updated_by BIGINT,
+    deleted_at TIMESTAMPTZ,
+    deleted_by BIGINT
 );
 
--- Hash index pada uuid tanpa unique constraint
+-- Hash index pada uuid untuk equality lookup cepat O(1)
 CREATE INDEX idx_categories_uuid_hash ON categories USING HASH (uuid);
+
+-- Partial Unique Index untuk kolom unik pada data aktif (soft delete)
+CREATE UNIQUE INDEX idx_categories_slug_unique_active 
+ON categories (slug) 
+WHERE deleted_at IS NULL;
 
 
 -- 2. Tabel Berelasi (contoh: products)
@@ -82,10 +136,18 @@ CREATE TABLE products (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     uuid UUID NOT NULL DEFAULT gen_random_uuid(),
     category_id BIGINT NOT NULL,
+    sku VARCHAR(100) NOT NULL,
     name VARCHAR(255) NOT NULL,
     price NUMERIC(15, 2) NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    -- Kolom Audit (semua nullable, tanpa default DB)
+    created_at TIMESTAMPTZ,
+    created_by BIGINT,
+    updated_at TIMESTAMPTZ,
+    updated_by BIGINT,
+    deleted_at TIMESTAMPTZ,
+    deleted_by BIGINT,
+
     CONSTRAINT fk_products_category FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE RESTRICT
 );
 
@@ -94,15 +156,23 @@ CREATE INDEX idx_products_uuid_hash ON products USING HASH (uuid);
 
 -- B-Tree index pada foreign key internal untuk optimasi JOIN
 CREATE INDEX idx_products_category_id ON products (category_id);
+
+-- Partial Unique Index untuk SKU unik pada produk yang aktif
+CREATE UNIQUE INDEX idx_products_sku_unique_active 
+ON products (sku) 
+WHERE deleted_at IS NULL;
 ```
 
 ---
 
-## 4. DTO & Model Code Patterns
+## 5. DTO & Model Code Patterns
 
-### 4.1. Request DTO
+### 5.1. Request DTO
 ```java
 public record CreateProductRequest(
+    @NotBlank
+    String sku,
+
     @NotBlank
     String name,
 
@@ -116,56 +186,79 @@ public record CreateProductRequest(
 ) {}
 ```
 
-### 4.2. Response DTO
+### 5.2. Response DTO
 ```java
 public record ProductResponse(
-    // Menggunakan uuid, id bigint TIDAK BOLEH diekspos
+    // Menggunakan uuid, id bigint internal TIDAK BOLEH diekspos
     UUID uuid,
+    String sku,
     String name,
     BigDecimal price,
 
     // Relasi diekspos sebagai *_uuid
     UUID categoryUuid,
 
+    // Audit fields ke FE (hanya timestamp & uuid user bila diperlukan)
     Instant createdAt,
-    Instant updatedAt
+    UUID createdByUuid,
+    Instant updatedAt,
+    UUID updatedByUuid
 ) {}
 ```
 
-### 4.3. Resolution Logic di Service Layer
+### 5.3. Service Layer Pattern (Create, Update & Soft Delete)
 ```java
-@Transactional
-public ProductResponse createProduct(CreateProductRequest request) {
-    // 1. Resolve categoryUuid ke categoryId internal
-    Long categoryId = categoryRepository.findIdByUuid(request.categoryUuid())
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Kategori tidak ditemukan"));
+@Service
+@RequiredArgsConstructor
+public class ProductService {
 
-    // 2. Simpan produk menggunakan categoryId internal
-    Product product = Product.builder()
-            .uuid(UUID.randomUUID())
-            .categoryId(categoryId)
-            .name(request.name())
-            .price(request.price())
-            .build();
-    productRepository.save(product);
+    private final ProductRepository productRepository;
+    private final CategoryRepository categoryRepository;
 
-    // 3. Mapping kembali ke Response DTO dengan UUID
-    return new ProductResponse(
-            product.getUuid(),
-            product.getName(),
-            product.getPrice(),
-            request.categoryUuid(),
-            product.getCreatedAt(),
-            product.getUpdatedAt()
-    );
+    @Transactional
+    public ProductResponse createProduct(CreateProductRequest request, Long currentUserId) {
+        // 1. Resolve categoryUuid ke categoryId internal
+        Long categoryId = categoryRepository.findIdByUuid(request.categoryUuid())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Kategori tidak ditemukan"));
+
+        Instant now = Instant.now();
+
+        // 2. Simpan produk (nilai audit diisi oleh aplikasi)
+        Product product = Product.builder()
+                .uuid(UUID.randomUUID())
+                .categoryId(categoryId)
+                .sku(request.sku())
+                .name(request.name())
+                .price(request.price())
+                .createdAt(now)
+                .createdBy(currentUserId)
+                .updatedAt(now)
+                .updatedBy(currentUserId)
+                .build();
+        productRepository.save(product);
+
+        // 3. Mapping ke Response DTO (hanya UUID yang keluar)
+        return toResponse(product, request.categoryUuid(), null);
+    }
+
+    @Transactional
+    public void softDeleteProduct(UUID productUuid, Long currentUserId) {
+        Product product = productRepository.findByUuidAndDeletedAtIsNull(productUuid)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Produk tidak ditemukan"));
+
+        // Soft delete diisi oleh aplikasi
+        product.setDeletedAt(Instant.now());
+        product.setDeletedBy(currentUserId);
+        productRepository.save(product);
+    }
 }
 ```
 
 ---
 
-## 5. Development & Environment Workflows
+## 6. Development & Environment Workflows
 
-### 5.1. Docker Services (`compose.yml`)
+### 6.1. Docker Services (`compose.yml`)
 - Jalankan semua service pendukung (Postgres, Valkey, MinIO, Adminer, Swagger UI):
   ```bash
   docker compose up -d
@@ -175,7 +268,7 @@ public ProductResponse createProduct(CreateProductRequest request) {
   docker compose ps
   ```
 
-### 5.2. Port Referensi
+### 6.2. Port Referensi
 | Service | Host Port | Internal Port | Keterangan |
 |---|---|---|---|
 | Spring Boot App | `8080` | `8080` | Aplikasi backend utama |
@@ -186,7 +279,7 @@ public ProductResponse createProduct(CreateProductRequest request) {
 | Adminer | `8083` | `8080` | Web UI PostgreSQL |
 | Swagger UI | `8085` | `8080` | OpenAPI spec viewer |
 
-### 5.3. OpenAPI Specification
+### 6.3. OpenAPI Specification
 - Lokasi spec: `openapi/openapi.yaml`
 - Sinkronisasi otomatis ke Swagger UI:
   ```bash
@@ -197,7 +290,7 @@ public ProductResponse createProduct(CreateProductRequest request) {
   make openapi-sync
   ```
 
-### 5.4. Build & Testing
+### 6.4. Build & Testing
 - Menjalankan seluruh test:
   ```bash
   ./gradlew test
@@ -213,8 +306,10 @@ public ProductResponse createProduct(CreateProductRequest request) {
 
 ---
 
-## 6. Coding & Git Rules for Agents
-1. **No ID Leakage**: Selalu review seluruh DTO dan Controller agar tidak ada `Long id` atau `id` internal yang bocor keluar API.
-2. **Consistent Symlinks**: File `CLAUDE.md` dan `GEMINI.md` adalah symlink yang menunjuk ke `AGENTS.md`. Jangan ubah symlink menjadi file terpisah.
-3. **OpenAPI First / Synced**: Setiap perubahan endpoint API wajib dicerminkan pada `openapi/openapi.yaml`.
-4. **Clean Git Commits**: Buat commit message yang jelas, deskriptif, dan fokus pada satu lingkup perubahan.
+## 7. Coding & Git Rules for Agents
+1. **No ID Leakage**: Selalu review seluruh DTO dan Controller agar tidak ada `Long id` atau `id` internal (termasuk `created_by`, `updated_by`, `deleted_by`) yang bocor keluar API. Selalu gunakan `*_uuid`.
+2. **Audit Columns Handled by App**: Semua kolom audit (`created_at`, `created_by`, `updated_at`, `updated_by`, `deleted_at`, `deleted_by`) harus nullable, tanpa DB default, dan nilainya diisi eksplisit oleh aplikasi.
+3. **Soft Delete & Partial Unique Indexes**: Setiap constraint unique wajib memakai partial index `WHERE deleted_at IS NULL`.
+4. **Consistent Symlinks**: File `CLAUDE.md` dan `GEMINI.md` adalah symlink yang menunjuk ke `AGENTS.md`. Jangan ubah symlink menjadi file terpisah.
+5. **OpenAPI First / Synced**: Setiap perubahan endpoint API wajib dicerminkan pada `openapi/openapi.yaml`.
+6. **Clean Git Commits**: Buat commit message yang jelas, deskriptif, dan fokus pada satu lingkup perubahan.
