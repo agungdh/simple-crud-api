@@ -256,7 +256,113 @@ public class ProductService {
 
 ---
 
-## 6. Lombok Standards & Best Practices
+## 6. Cursor Pagination, Filtering & Sorting Standards
+
+Seluruh endpoint yang menyajikan list data wajib mengimplementasikan **Cursor Pagination** berbasis `uuid` untuk skalabilitas tinggi, performa query konsisten $O(1)$, dan keamanan data (information hiding).
+
+### 6.1. Mekanisme Kursor & Parameter
+- **Parameter Kursor**: `?after={uuid}`
+  - Mengambil data setelah entitas yang memiliki `uuid` tersebut.
+  - Untuk halaman pertama, parameter `after` tidak dikirimkan / bernilai null.
+  - Frontend **DILARANG** mengirimkan `id` internal atau `page`/`offset`.
+- **Parameter Ukuran Halaman**: `?limit={int}` (default: `20`, maksimum: `100`).
+- **Resolusi Kursor di Backend**:
+  - Backend mencari record berdasarkan `uuid` kursor (`SELECT id, ... FROM ... WHERE uuid = :after`).
+  - Jika kursor tidak ditemukan, kembalikan HTTP 400 Bad Request ("Cursor tidak valid atau tidak ditemukan").
+  - Ambil record sebanyak `limit + 1` untuk mendeteksi apakah masih ada data di halaman berikutnya (`hasNext`).
+
+### 6.2. Default Sorting: `id DESC`
+- Jika parameter `sort` tidak dikirimkan oleh client:
+  - **Default Sort**: `ORDER BY id DESC`.
+  - **Query Halaman Pertama**:
+    ```sql
+    SELECT * FROM products 
+    WHERE deleted_at IS NULL 
+    ORDER BY id DESC 
+    LIMIT :limit + 1;
+    ```
+  - **Query Halaman Berikutnya (`?after={uuid}`)**:
+    ```sql
+    -- 1. Lookup id kursor
+    SELECT id FROM products WHERE uuid = :after; -- misal menghasilkan :cursor_id
+
+    -- 2. Fetch data halaman berikutnya
+    SELECT * FROM products 
+    WHERE deleted_at IS NULL 
+      AND id < :cursor_id 
+    ORDER BY id DESC 
+    LIMIT :limit + 1;
+    ```
+
+### 6.3. Custom Sorting & Deterministic Tie-Breaker
+- Client dapat mengirimkan parameter sort, contoh: `?sort=price,asc` atau `?sort=created_at,desc`.
+- **Aturan Whitelist**: Hanya izinkan sorting pada kolom yang telah di-whitelist di layer service/repository untuk mencegah SQL injection.
+- **Aturan Deterministic Tie-Breaker**:
+  - Kolom non-unique wajib ditambahkan `id` sebagai tie-breaker penentu keunikan urutan:
+    - Sort DESC: `ORDER BY <field> DESC, id DESC`
+    - Sort ASC: `ORDER BY <field> ASC, id ASC`
+- **Query Kursor dengan Row-Value Comparison (Postgres Tuples)**:
+  - Ambil nilai field dan id kursor: `SELECT <field>, id FROM ... WHERE uuid = :after`
+  - Untuk DESC:
+    ```sql
+    WHERE deleted_at IS NULL 
+      AND (<field>, id) < (:cursor_value, :cursor_id)
+    ORDER BY <field> DESC, id DESC
+    LIMIT :limit + 1;
+    ```
+  - Untuk ASC:
+    ```sql
+    WHERE deleted_at IS NULL 
+      AND (<field>, id) > (:cursor_value, :cursor_id)
+    ORDER BY <field> ASC, id ASC
+    LIMIT :limit + 1;
+    ```
+
+### 6.4. Filtering Standards
+- Semua query filter wajib menyertakan klausul `deleted_at IS NULL` (hanya data aktif).
+- Filter relasi foreign key dari query param wajib menggunakan format `*_uuid` (misal `?category_uuid=...`), lalu di-resolve menjadi `category_id` internal sebelum query dijalankan.
+- Filter pencarian teks menggunakan parameter `?search=...` dengan pencarian case-insensitive (`ILIKE`).
+
+### 6.5. Standard Response DTO
+Format respons JSON wajib membungkus list data dan metadata kursor:
+
+```java
+public record CursorResponse<T>(
+    List<T> data,
+    PaginationMeta pagination
+) {
+    public record PaginationMeta(
+        int limit,
+        boolean hasNext,
+        UUID nextCursor // UUID item terakhir dari data jika hasNext = true, null jika false
+    ) {}
+}
+```
+
+Contoh JSON Response:
+```json
+{
+  "data": [
+    {
+      "uuid": "4f9d2426-3d23-45c1-9b19-21b28bb67e91",
+      "sku": "SKU-001",
+      "name": "Keyboard Mechanical",
+      "price": 750000.00,
+      "category_uuid": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "created_at": "2026-11-20T12:00:00Z"
+    }
+  ],
+  "pagination": {
+    "limit": 20,
+    "has_next": true,
+    "next_cursor": "4f9d2426-3d23-45c1-9b19-21b28bb67e91"
+  }
+}
+```
+
+---
+
+## 7. Lombok Standards & Best Practices
 
 Proyek ini menggunakan Lombok untuk mengeliminasi boilerplate code. Seluruh agent **wajib memanfaatkan Lombok** secara optimal dengan batasan hanya menggunakan fitur yang stabil.
 
@@ -284,7 +390,7 @@ Proyek ini menggunakan Lombok untuk mengeliminasi boilerplate code. Seluruh agen
 
 ---
 
-## 7. Development & Environment Workflows
+## 8. Development & Environment Workflows
 
 ### 6.1. Docker Services (`compose.yml`)
 - Jalankan semua service pendukung (Postgres, Valkey, MinIO, Adminer, Swagger UI):
@@ -334,11 +440,12 @@ Proyek ini menggunakan Lombok untuk mengeliminasi boilerplate code. Seluruh agen
 
 ---
 
-## 8. Coding & Git Rules for Agents
+## 9. Coding & Git Rules for Agents
 1. **No ID Leakage**: Selalu review seluruh DTO dan Controller agar tidak ada `Long id` atau `id` internal (termasuk `created_by`, `updated_by`, `deleted_by`) yang bocor keluar API. Selalu gunakan `*_uuid`.
 2. **Audit Columns Handled by App**: Semua kolom audit (`created_at`, `created_by`, `updated_at`, `updated_by`, `deleted_at`, `deleted_by`) harus nullable, tanpa DB default, dan nilainya diisi eksplisit oleh aplikasi.
 3. **Soft Delete & Partial Unique Indexes**: Setiap constraint unique wajib memakai partial index `WHERE deleted_at IS NULL`.
 4. **Consistent Lombok Usage**: Wajib manfaatkan fitur Lombok yang stabil (`@RequiredArgsConstructor`, `@Slf4j`, `@Getter`, `@Setter`, `@Builder`, dll.) untuk mereduksi boilerplate. Dilarang memakai package `lombok.experimental.*`.
-5. **Consistent Symlinks**: File `CLAUDE.md` dan `GEMINI.md` adalah symlink yang menunjuk ke `AGENTS.md`. Jangan ubah symlink menjadi file terpisah.
-6. **OpenAPI First / Synced**: Setiap perubahan endpoint API wajib dicerminkan pada `openapi/openapi.yaml`.
-7. **Clean Git Commits**: Buat commit message yang jelas, deskriptif, dan fokus pada satu lingkup perubahan.
+5. **Cursor Pagination by Default**: Seluruh endpoint list data wajib mengimplementasikan cursor pagination dengan parameter `?after={uuid}` (default sort: `id DESC`). Dilarang menggunakan offset pagination atau membocorkan internal ID.
+6. **Consistent Symlinks**: File `CLAUDE.md` dan `GEMINI.md` adalah symlink yang menunjuk ke `AGENTS.md`. Jangan ubah symlink menjadi file terpisah.
+7. **OpenAPI First / Synced**: Setiap perubahan endpoint API wajib dicerminkan pada `openapi/openapi.yaml`.
+8. **Clean Git Commits**: Buat commit message yang jelas, deskriptif, dan fokus pada satu lingkup perubahan.
