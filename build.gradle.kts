@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.compile.JavaCompile
+
 plugins {
 	java
 	id("org.springframework.boot") version "4.2.0"
@@ -9,8 +11,12 @@ version = "0.0.1-SNAPSHOT"
 
 java {
 	toolchain {
-		languageVersion = JavaLanguageVersion.of(25)
+		languageVersion = JavaLanguageVersion.of(27)
 	}
+}
+
+tasks.withType<JavaCompile> {
+	options.release.set(25)
 }
 
 repositories {
