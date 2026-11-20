@@ -7,7 +7,7 @@ Dokumen ini adalah pedoman dan instruksi utama bagi seluruh AI Agent (Claude, Ge
 ## 1. Project Overview & Tech Stack
 
 - **Platform / Runtime**: Java 25
-- **Framework**: Spring Boot 4.1.2 (WebMvc, Validation, Lombok)
+- **Framework**: Spring Boot 4.1.2 (WebMvc, Validation, Lombok, `spring-security-crypto` untuk BCrypt)
 - **Database**: PostgreSQL 18 (dengan ekstensi `pg_trgm` untuk pencarian teks)
 - **Cache / In-Memory Store**: Valkey 9 (Redis compatible)
 - **Object Storage**: MinIO S3 (AWS SDK for Java v2)
@@ -39,7 +39,7 @@ Dokumen ini adalah pedoman dan instruksi utama bagi seluruh AI Agent (Claude, Ge
   - *Catatan teknis PostgreSQL*: Indeks `HASH` di PostgreSQL secara native tidak mendukung constraint `UNIQUE`. Indeks ini memberikan performa $O(1)$ untuk equality query (`WHERE uuid = :uuid`).
 - **Eksposur Frontend**:
   - Kolom `uuid` inilah satu-satunya identifier entitas yang diekspos ke Frontend / API consumer.
-  - Semua endpoint CRUD menggunakan `uuid` sebagai identifier (contoh: `/api/v1/items/{uuid}`).
+  - Semua endpoint CRUD menggunakan `uuid` sebagai identifier (contoh: `/api/items/{uuid}`).
 
 ### 2.3. Foreign Key & DTO Mapping Rule
 - **Di Database (Physical DB Level)**:
@@ -674,3 +674,5 @@ public class ProductService {
 9. **Consistent Symlinks**: File `CLAUDE.md` dan `GEMINI.md` adalah symlink yang menunjuk ke `AGENTS.md`. Jangan ubah symlink menjadi file terpisah.
 10. **OpenAPI First / Synced**: Setiap perubahan endpoint API wajib dicerminkan pada `openapi/openapi.yaml`.
 11. **Clean Git Commits**: Buat commit message yang jelas, deskriptif, dan fokus pada satu lingkup perubahan.
+12. **API Routing — Tanpa Versioning**: Prefix URL seluruh endpoint adalah `/api` tanpa version segment. Format: `/api/{resource}` (contoh: `/api/users`, `/api/products`). **Dilarang** menggunakan prefix versi seperti `/api/v1/`, `/api/v2/`, dll.
+13. **Password Hashing — BCrypt Wajib**: Setiap field password entitas manapun **wajib** di-encode menggunakan `BCryptPasswordEncoder` sebelum disimpan ke database. Inject `PasswordEncoder` bean (didefinisikan sebagai `@Bean BCryptPasswordEncoder` di konfigurasi) ke service, lalu panggil `passwordEncoder.encode(plainPassword)`. **Dilarang** menyimpan password plain text. Dependency yang digunakan: `org.springframework.security:spring-security-crypto` (tanpa full Spring Security/filter chain).
