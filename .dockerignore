@@ -1,0 +1,15 @@
+.git
+.gradle
+.idea
+.vscode
+.commandcode
+.github
+src
+openapi
+bin
+gradle
+*.md
+compose.yml
+Makefile
+Dockerfile
+.dockerignore
