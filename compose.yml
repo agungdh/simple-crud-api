@@ -65,18 +65,20 @@ services:
       retries: 5
 
   openapi:
-    build:
-      context: ./openapi
-      dockerfile_inline: |
-        FROM swaggerapi/swagger-ui:latest
-        COPY openapi.yaml /usr/share/nginx/html/openapi.yaml
-    image: demo-openapi:latest
+    image: swaggerapi/swagger-ui:latest
     restart: always
     environment:
-      URL: /openapi.yaml
+      URL: /spec/openapi.yaml
       BASE_URL: /
     ports:
       - "127.0.0.1:8085:8080"
+    volumes:
+      - openapi_spec:/usr/share/nginx/html/spec
+    develop:
+      watch:
+        - action: sync
+          path: ./openapi/openapi.yaml
+          target: /usr/share/nginx/html/spec/openapi.yaml
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ >/dev/null 2>&1"]
       interval: 10s
@@ -87,3 +89,4 @@ volumes:
   postgres_data:
   valkey_data:
   minio_data:
+  openapi_spec:
