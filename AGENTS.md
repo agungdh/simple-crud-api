@@ -8,7 +8,7 @@ Dokumen ini adalah pedoman dan instruksi utama bagi seluruh AI Agent (Claude, Ge
 
 - **Platform / Runtime**: Java 25
 - **Framework**: Spring Boot 4.1.2 (WebMvc, Validation, Lombok)
-- **Database**: PostgreSQL 18
+- **Database**: PostgreSQL 18 (dengan ekstensi `pg_trgm` untuk pencarian teks)
 - **Cache / In-Memory Store**: Valkey 9 (Redis compatible)
 - **Object Storage**: MinIO S3 (AWS SDK for Java v2)
 - **Object Mapping**: MapStruct 1.6.3 (terintegrasi dengan Lombok)
@@ -120,6 +120,53 @@ Karena sistem menggunakan **Soft Delete** (`deleted_at IS NULL` menandakan data 
      - Menghindari human error lupa menambahkan filter `deleted_at IS NULL` di repository queries.
    - Jika menggunakan native query / JDBC Client / MyBatis, query wajib selalu menyertakan filter `WHERE deleted_at IS NULL`.
 
+### 3.5. Text Search & Virtual Column Trigram Indexing Standards (`pg_trgm`)
+1. **Ekstensi `pg_trgm`**:
+   - PostgreSQL menyediakan modul ekstensi `pg_trgm` (trigram) yang sangat optimal untuk pencarian teks substring matching (`ILIKE '%keyword%'`), kesamaan kemiripan teks, dan fuzzy search.
+   - Ekstensi wajib diaktifkan pada migrasi basis data awal (Flyway migration):
+     ```sql
+     CREATE EXTENSION IF NOT EXISTS pg_trgm;
+     ```
+
+2. **Kolom Virtual / Generated Column (`search_text`)**:
+   - Dalam satu tabel entitas, pencarian teks biasanya mencakup banyak kolom sekaligus (contoh: `sku`, `name`, `slug`, `description`, dll.).
+   - Daripada membuat indeks GIN terpisah pada setiap kolom teks (yang memboroskan RAM/disk dan memperlambat write), **setiap tabel wajib membuat satu kolom virtual/generated** (`search_text`) yang menggabungkan seluruh field teks yang dapat dicari:
+     ```sql
+     search_text TEXT GENERATED ALWAYS AS (
+         coalesce(name, '') || ' ' || coalesce(sku, '')
+     ) STORED
+     ```
+   - PostgreSQL secara otomatis menghitung dan memperbarui isi kolom `search_text` saat baris dibuat atau diubah, tanpa perlu logika tambahan di aplikasi.
+   - Kolom `coalesce` digunakan untuk memastikan nilai `NULL` tidak merusak hasil penggabungan string.
+
+3. **Single Trigram GIN Index pada Kolom Virtual**:
+   - Setiap tabel hanya memerlukan **satu indeks GIN Trigram** pada kolom virtual `search_text`:
+     ```sql
+     CREATE INDEX idx_<table_name>_search_text_trgm 
+     ON <table_name> USING gin (search_text gin_trgm_ops) 
+     WHERE deleted_at IS NULL;
+     ```
+   - **Wajib menggunakan Partial Index** dengan klausa `WHERE deleted_at IS NULL` agar konsisten dengan standar Soft Delete dan tidak membebani memori.
+   - *Keuntungan*:
+     - Menghemat kapasitas disk dan memori RAM secara signifikan (1 index gabungan vs N index individual).
+     - Menjadikan query pencarian multi-kolom sangat ringkas dan cepat via *Bitmap Index Scan*.
+
+4. **Pencarian Case-Insensitive Terindeks Penuh**:
+   - Modul `pg_trgm` secara otomatis menormalkan isi teks menjadi huruf kecil (*lowercase*) saat mengekstrak trigram.
+   - Operator class `gin_trgm_ops` mendukung langsung perbandingan case-insensitive `ILIKE` (`~~*`).
+   - Query repository di Spring Data JPA cukup memeriksa satu field `searchText`:
+     ```java
+     @Query("SELECT p FROM Product p WHERE p.searchText ILIKE CONCAT('%', :search, '%')")
+     List<Product> search(@Param("search") String search);
+     ```
+   - **Pemetaan Entity JPA**:
+     Pada entity class, petakan kolom `search_text` sebagai read-only:
+     ```java
+     @Column(name = "search_text", insertable = false, updatable = false)
+     private String searchText;
+     ```
+     Kolom `search_text` tidak boleh diekspos pada Request DTO maupun Response DTO.
+
 ---
 
 ## 4. Schema DDL Pattern Example
@@ -127,12 +174,20 @@ Karena sistem menggunakan **Soft Delete** (`deleted_at IS NULL` menandakan data 
 Berikut adalah contoh standar DDL lengkap untuk tabel baru yang mengimplementasikan seluruh standar di atas:
 
 ```sql
+-- 0. Ekstensi Trigram untuk Full/Partial Text Search
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
 -- 1. Tabel Utama (contoh: categories)
 CREATE TABLE categories (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     uuid UUID NOT NULL DEFAULT gen_random_uuid(),
     name VARCHAR(100) NOT NULL,
     slug VARCHAR(120) NOT NULL,
+
+    -- Kolom Virtual / Generated untuk pencarian teks multi-kolom
+    search_text TEXT GENERATED ALWAYS AS (
+        coalesce(name, '') || ' ' || coalesce(slug, '')
+    ) STORED,
 
     -- Kolom Audit (semua nullable, tanpa default DB)
     created_at TIMESTAMPTZ,
@@ -151,6 +206,11 @@ CREATE UNIQUE INDEX idx_categories_slug_unique_active
 ON categories (slug) 
 WHERE deleted_at IS NULL;
 
+-- Trigram GIN index pada kolom virtual search_text
+CREATE INDEX idx_categories_search_text_trgm 
+ON categories USING gin (search_text gin_trgm_ops) 
+WHERE deleted_at IS NULL;
+
 
 -- 2. Tabel Berelasi (contoh: products)
 CREATE TABLE products (
@@ -160,6 +220,11 @@ CREATE TABLE products (
     sku VARCHAR(100) NOT NULL,
     name VARCHAR(255) NOT NULL,
     price NUMERIC(15, 2) NOT NULL,
+
+    -- Kolom Virtual / Generated untuk pencarian teks multi-kolom
+    search_text TEXT GENERATED ALWAYS AS (
+        coalesce(sku, '') || ' ' || coalesce(name, '')
+    ) STORED,
 
     -- Kolom Audit (semua nullable, tanpa default DB)
     created_at TIMESTAMPTZ,
@@ -181,6 +246,11 @@ CREATE INDEX idx_products_category_id ON products (category_id);
 -- Partial Unique Index untuk SKU unik pada produk yang aktif
 CREATE UNIQUE INDEX idx_products_sku_unique_active 
 ON products (sku) 
+WHERE deleted_at IS NULL;
+
+-- Trigram GIN index pada kolom virtual search_text
+CREATE INDEX idx_products_search_text_trgm 
+ON products USING gin (search_text gin_trgm_ops) 
 WHERE deleted_at IS NULL;
 ```
 
@@ -342,7 +412,14 @@ Seluruh endpoint yang menyajikan list data wajib mengimplementasikan **Cursor Pa
 ### 6.4. Filtering Standards
 - Semua query filter wajib menyertakan klausul `deleted_at IS NULL` (hanya data aktif).
 - Filter relasi foreign key dari query param wajib menggunakan format `*_uuid` (misal `?category_uuid=...`), lalu di-resolve menjadi `category_id` internal sebelum query dijalankan.
-- Filter pencarian teks menggunakan parameter `?search=...` dengan pencarian case-insensitive (`ILIKE`).
+- Filter pencarian teks menggunakan parameter `?search=...`:
+  - Pencarian multi-kolom ditargetkan ke kolom virtual/generated `search_text` yang menggabungkan seluruh field teks yang dapat dicari:
+    ```sql
+    WHERE deleted_at IS NULL AND search_text ILIKE CONCAT('%', :search, '%')
+    ```
+  - Wajib **case-insensitive** menggunakan operator `ILIKE` yang didukung secara native oleh indeks GIN Trigram.
+  - **Dilarang** menggunakan method derived Spring Data `ContainingIgnoreCase` atau fungsi `LOWER(column)` pada JPQL karena membungkus kolom dengan fungsi akan menonaktifkan GIN index scan dan memicu *Sequential Scan*.
+  - Kolom virtual `search_text` wajib telah diindeks menggunakan **GIN Trigram Index** (`gin_trgm_ops`) dengan klausa `WHERE deleted_at IS NULL` sehingga pencarian substring case-insensitive dieksekusi via Bitmap Index Scan berkecepatan tinggi.
 
 ### 6.5. Standard Response DTO
 Format respons JSON wajib membungkus list data dan metadata kursor:
@@ -593,6 +670,7 @@ public class ProductService {
 5. **Consistent Lombok Usage**: Wajib manfaatkan fitur Lombok yang stabil (`@RequiredArgsConstructor`, `@Slf4j`, `@Getter`, `@Setter`, `@Builder`, dll.) untuk mereduksi boilerplate. Dilarang memakai package `lombok.experimental.*`.
 6. **MapStruct for Entity-DTO Mapping**: Wajib menggunakan interface MapStruct dengan `componentModel = MappingConstants.ComponentModel.SPRING` (atau `"spring"`) untuk konversi Entity <-> DTO. Selalu abaikan internal ID dan kolom audit dari DTO ke Entity.
 7. **Cursor Pagination by Default**: Seluruh endpoint list data wajib mengimplementasikan cursor pagination dengan parameter `?after={uuid}` (default sort: `id DESC`). Dilarang menggunakan offset pagination atau membocorkan internal ID.
-8. **Consistent Symlinks**: File `CLAUDE.md` dan `GEMINI.md` adalah symlink yang menunjuk ke `AGENTS.md`. Jangan ubah symlink menjadi file terpisah.
-9. **OpenAPI First / Synced**: Setiap perubahan endpoint API wajib dicerminkan pada `openapi/openapi.yaml`.
-10. **Clean Git Commits**: Buat commit message yang jelas, deskriptif, dan fokus pada satu lingkup perubahan.
+8. **Virtual Column Trigram Index for Search**: Karena pencarian teks dapat mencakup banyak kolom, setiap tabel wajib mendefinisikan 1 kolom virtual/generated `search_text TEXT GENERATED ALWAYS AS (...) STORED` yang menggabungkan seluruh field teks pencarian. Buat 1 GIN index dengan `gin_trgm_ops` pada kolom `search_text` dengan klausa `WHERE deleted_at IS NULL`. Query pencarian di repository wajib mengarahkan operator `ILIKE` ke field `searchText`. Dilarang memakai derived query `ContainingIgnoreCase` atau `LOWER(column)` yang mematikan GIN index scan.
+9. **Consistent Symlinks**: File `CLAUDE.md` dan `GEMINI.md` adalah symlink yang menunjuk ke `AGENTS.md`. Jangan ubah symlink menjadi file terpisah.
+10. **OpenAPI First / Synced**: Setiap perubahan endpoint API wajib dicerminkan pada `openapi/openapi.yaml`.
+11. **Clean Git Commits**: Buat commit message yang jelas, deskriptif, dan fokus pada satu lingkup perubahan.
