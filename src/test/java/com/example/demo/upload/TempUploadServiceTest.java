@@ -1,11 +1,13 @@
 package com.example.demo.upload;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.net.URI;
@@ -18,6 +20,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.util.unit.DataSize;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.example.demo.storage.Bucket;
 import com.example.demo.storage.StorageProperties;
@@ -51,6 +55,28 @@ class TempUploadServiceTest {
 		assertThat(response.expiresIn()).isEqualTo(900);
 		verify(storage).presignPut(eq(Bucket.PRIVATE), eq(response.key()), isNull(),
 				eq(Duration.ofMinutes(15)), eq(123L));
+	}
+
+	@Test
+	void presignRejectsSizeAboveConfiguredMaximum() {
+		long tooLarge = DataSize.ofMegabytes(100).toBytes() + 1;
+
+		assertThatThrownBy(() -> service.presign(tooLarge))
+				.isInstanceOf(ResponseStatusException.class)
+				.hasMessageContaining("size exceeds maximum of 104857600 bytes");
+
+		verifyNoInteractions(storage);
+	}
+
+	@Test
+	void presignAcceptsSizeAtConfiguredMaximum() {
+		long maxSize = DataSize.ofMegabytes(100).toBytes();
+		when(storage.presignPut(eq(Bucket.PRIVATE), anyString(), isNull(), eq(Duration.ofMinutes(15)), eq(maxSize)))
+				.thenReturn(URI.create("http://localhost:9000/priv/tmp/upload?signature"));
+
+		PresignUploadResponse response = service.presign(maxSize);
+
+		assertThat(response.key()).startsWith("tmp/");
 	}
 
 	@Test
@@ -89,6 +115,7 @@ class TempUploadServiceTest {
 				"priv",
 				"pub",
 				"tmp/",
+				DataSize.ofMegabytes(100),
 				Duration.ofMinutes(15),
 				Duration.ofMinutes(1),
 				Duration.ofSeconds(30),

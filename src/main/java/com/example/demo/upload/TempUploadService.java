@@ -5,7 +5,9 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.example.demo.storage.Bucket;
 import com.example.demo.storage.StorageProperties;
@@ -25,6 +27,11 @@ public class TempUploadService {
 	}
 
 	public PresignUploadResponse presign(long size) {
+		long maxSize = properties.tempMaxSize().toBytes();
+		if (size > maxSize) {
+			throw new ResponseStatusException(HttpStatus.CONTENT_TOO_LARGE,
+					"size exceeds maximum of " + maxSize + " bytes");
+		}
 		String key = properties.tempPrefix() + UUID.randomUUID();
 		Duration expiry = properties.presignExpiry();
 		String uploadUrl = storage.presignPut(Bucket.PRIVATE, key, null, expiry, size).toString();

@@ -71,6 +71,21 @@ paths:
                     status: 400
                     error: Bad Request
                     path: /api/uploads/presign
+        '413':
+          description: |
+            Ukuran file melebihi batas maksimum. Batas diatur lewat
+            `S3_TEMP_MAX_SIZE` (default `100MB`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                tooLarge:
+                  value:
+                    timestamp: '2026-11-20T05:00:00.000Z'
+                    status: 413
+                    error: Content Too Large
+                    path: /api/uploads/presign
 components:
   schemas:
     PresignUploadRequest:
@@ -84,7 +99,8 @@ components:
           minimum: 1
           description: |
             Ukuran file dalam byte. Nilai ini di-sign sebagai `Content-Length`,
-            jadi upload harus tepat sebesar ini.
+            jadi upload harus tepat sebesar ini. Maksimum mengikuti
+            `S3_TEMP_MAX_SIZE` (default `100MB`).
           example: 204800
     PresignUploadResponse:
       type: object

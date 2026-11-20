@@ -4,6 +4,7 @@ import java.net.URI;
 import java.time.Duration;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.util.unit.DataSize;
 
 @ConfigurationProperties("app.storage")
 public record StorageProperties(
@@ -17,6 +18,7 @@ public record StorageProperties(
 		String privateBucket,
 		String publicBucket,
 		String tempPrefix,
+		DataSize tempMaxSize,
 		Duration tempTtl,
 		Duration tempCleanupInterval,
 		Duration tempCleanupGrace,
@@ -38,6 +40,9 @@ public record StorageProperties(
 		}
 		if (!tempPrefix.endsWith("/")) {
 			tempPrefix = tempPrefix + "/";
+		}
+		if (tempMaxSize == null) {
+			tempMaxSize = DataSize.ofMegabytes(100);
 		}
 		if (tempTtl == null) {
 			tempTtl = Duration.ofMinutes(15);
