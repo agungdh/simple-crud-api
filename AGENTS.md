@@ -256,7 +256,35 @@ public class ProductService {
 
 ---
 
-## 6. Development & Environment Workflows
+## 6. Lombok Standards & Best Practices
+
+Proyek ini menggunakan Lombok untuk mengeliminasi boilerplate code. Seluruh agent **wajib memanfaatkan Lombok** secara optimal dengan batasan hanya menggunakan fitur yang stabil.
+
+### 6.1. Fitur Stabil yang WAJIB Digunakan
+1. **Dependency Injection**:
+   - Gunakan `@RequiredArgsConstructor` pada `@Service`, `@RestController`, `@Component`, dan `@Configuration` untuk otomatis menghasilkan constructor bagi semua field `private final`.
+   - **Dilarang** menulis constructor injection boilerplate manual.
+   - **Dilarang** menggunakan `@Autowired` pada field injection.
+2. **Logging**:
+   - Gunakan anotasi `@Slf4j` pada setiap class yang membutuhkan logging.
+   - **Dilarang** membuat logger manual seperti `LoggerFactory.getLogger(...)`.
+3. **Entities & Models**:
+   - Gunakan `@Getter` dan `@Setter`.
+   - Gunakan `@Builder` untuk konstruksi objek.
+   - Gunakan `@NoArgsConstructor` dan `@AllArgsConstructor`.
+   - Gunakan `@ToString(exclude = ...)` untuk mencegah circular reference pada relasi.
+   - Gunakan `@EqualsAndHashCode(onlyExplicitlyIncluded = true)` dengan `@EqualsAndHashCode.Include` hanya pada field `uuid`.
+4. **DTO**:
+   - Java `record` tetap menjadi pilihan utama untuk immutable request/response DTO.
+   - Jika membuat class DTO non-record, gunakan `@Getter`, `@Builder`, `@AllArgsConstructor`, `@NoArgsConstructor`.
+
+### 6.2. Batasan: DILARANG Menggunakan Fitur Experimental
+- **DILARANG KERAS** menggunakan anotasi dari package `lombok.experimental.*` (seperti `@UtilityClass`, `@FieldDefaults`, `@ExtensionMethod`, `@Helper`, dll.).
+- Hanya gunakan fitur inti yang stabil dan didukung secara universal oleh compiler Java 25 dan IDE plugin.
+
+---
+
+## 7. Development & Environment Workflows
 
 ### 6.1. Docker Services (`compose.yml`)
 - Jalankan semua service pendukung (Postgres, Valkey, MinIO, Adminer, Swagger UI):
@@ -306,10 +334,11 @@ public class ProductService {
 
 ---
 
-## 7. Coding & Git Rules for Agents
+## 8. Coding & Git Rules for Agents
 1. **No ID Leakage**: Selalu review seluruh DTO dan Controller agar tidak ada `Long id` atau `id` internal (termasuk `created_by`, `updated_by`, `deleted_by`) yang bocor keluar API. Selalu gunakan `*_uuid`.
 2. **Audit Columns Handled by App**: Semua kolom audit (`created_at`, `created_by`, `updated_at`, `updated_by`, `deleted_at`, `deleted_by`) harus nullable, tanpa DB default, dan nilainya diisi eksplisit oleh aplikasi.
 3. **Soft Delete & Partial Unique Indexes**: Setiap constraint unique wajib memakai partial index `WHERE deleted_at IS NULL`.
-4. **Consistent Symlinks**: File `CLAUDE.md` dan `GEMINI.md` adalah symlink yang menunjuk ke `AGENTS.md`. Jangan ubah symlink menjadi file terpisah.
-5. **OpenAPI First / Synced**: Setiap perubahan endpoint API wajib dicerminkan pada `openapi/openapi.yaml`.
-6. **Clean Git Commits**: Buat commit message yang jelas, deskriptif, dan fokus pada satu lingkup perubahan.
+4. **Consistent Lombok Usage**: Wajib manfaatkan fitur Lombok yang stabil (`@RequiredArgsConstructor`, `@Slf4j`, `@Getter`, `@Setter`, `@Builder`, dll.) untuk mereduksi boilerplate. Dilarang memakai package `lombok.experimental.*`.
+5. **Consistent Symlinks**: File `CLAUDE.md` dan `GEMINI.md` adalah symlink yang menunjuk ke `AGENTS.md`. Jangan ubah symlink menjadi file terpisah.
+6. **OpenAPI First / Synced**: Setiap perubahan endpoint API wajib dicerminkan pada `openapi/openapi.yaml`.
+7. **Clean Git Commits**: Buat commit message yang jelas, deskriptif, dan fokus pada satu lingkup perubahan.

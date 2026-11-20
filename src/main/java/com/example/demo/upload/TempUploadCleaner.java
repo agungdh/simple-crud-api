@@ -1,24 +1,19 @@
 package com.example.demo.upload;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import com.example.demo.storage.StorageProperties;
 
+@Slf4j
 @Component
+@RequiredArgsConstructor
 public class TempUploadCleaner {
-
-	private static final Logger log = LoggerFactory.getLogger(TempUploadCleaner.class);
 
 	private final TempUploadService tempUploads;
 	private final StorageProperties properties;
-
-	public TempUploadCleaner(TempUploadService tempUploads, StorageProperties properties) {
-		this.tempUploads = tempUploads;
-		this.properties = properties;
-	}
 
 	@Scheduled(fixedDelayString = "${app.storage.temp-cleanup-interval:1m}",
 			initialDelayString = "${app.storage.temp-cleanup-interval:1m}")

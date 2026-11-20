@@ -11,6 +11,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.util.UriUtils;
 
@@ -32,17 +33,12 @@ import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignReques
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
 @Service
+@RequiredArgsConstructor
 public class StorageService {
 
 	private final S3Client s3;
 	private final S3Presigner presigner;
 	private final StorageProperties properties;
-
-	public StorageService(S3Client s3, S3Presigner presigner, StorageProperties properties) {
-		this.s3 = s3;
-		this.presigner = presigner;
-		this.properties = properties;
-	}
 
 	public void put(Bucket bucket, String key, Path file, String contentType) {
 		s3.putObject(putObjectRequest(bucket, key, contentType), RequestBody.fromFile(file));

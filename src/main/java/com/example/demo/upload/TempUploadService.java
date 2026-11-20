@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -16,15 +17,11 @@ import com.example.demo.storage.StorageService;
 import software.amazon.awssdk.services.s3.model.S3Object;
 
 @Service
+@RequiredArgsConstructor
 public class TempUploadService {
 
 	private final StorageService storage;
 	private final StorageProperties properties;
-
-	public TempUploadService(StorageService storage, StorageProperties properties) {
-		this.storage = storage;
-		this.properties = properties;
-	}
 
 	public PresignUploadResponse presign(long size) {
 		long maxSize = properties.tempMaxSize().toBytes();
