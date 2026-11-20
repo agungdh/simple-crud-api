@@ -1,11 +1,17 @@
 openapi: 3.0.3
 info:
-  title: Demo Upload API
+  title: Demo API
   version: 1.0.0
   description: |
-    API untuk upload file sementara (temporary upload) ke bucket private.
+    API untuk manajemen user dan upload file sementara (temporary upload).
 
-    Alur:
+    User:
+    - Cursor pagination berbasis `uuid` dengan parameter `?after={uuid}`.
+    - Semua identifier yang diekspos adalah `uuid`; `id` bigint internal tidak
+      pernah keluar di API.
+    - Soft delete: data yang dihapus tidak tampil pada query manapun.
+
+    Upload:
     1. `POST /api/uploads/presign` dengan `size` file untuk mendapatkan `key`
        dan `uploadUrl`.
     2. Upload file langsung ke object storage dengan `PUT {uploadUrl}`.
@@ -21,9 +27,128 @@ servers:
     description: Local development
 security: []
 tags:
+  - name: Users
+    description: Manajemen user dengan cursor pagination dan soft delete
   - name: Uploads
     description: Presigned temporary upload
 paths:
+  /api/users:
+    get:
+      tags:
+        - Users
+      summary: Daftar user dengan cursor pagination
+      operationId: listUsers
+      parameters:
+        - name: search
+          in: query
+          required: false
+          description: Pencarian case-insensitive pada username dan name.
+          schema:
+            type: string
+        - name: after
+          in: query
+          required: false
+          description: UUID user terakhir dari halaman sebelumnya.
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          required: false
+          description: Jumlah data per halaman (default 20, maksimum 100).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Daftar user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserCursorResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    post:
+      tags:
+        - Users
+      summary: Membuat user baru
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: User berhasil dibuat
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/users/{uuid}:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        description: UUID public user.
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags:
+        - Users
+      summary: Detail user berdasarkan uuid
+      operationId: getUser
+      responses:
+        '200':
+          description: Detail user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags:
+        - Users
+      summary: Update user berdasarkan uuid
+      operationId: updateUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: User berhasil diupdate
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      tags:
+        - Users
+      summary: Soft delete user berdasarkan uuid
+      operationId: deleteUser
+      responses:
+        '204':
+          description: User berhasil dihapus
+        '404':
+          $ref: '#/components/responses/NotFound'
   /api/uploads/presign:
     post:
       tags:
@@ -88,6 +213,92 @@ paths:
                     path: /api/uploads/presign
 components:
   schemas:
+    CreateUserRequest:
+      type: object
+      required:
+        - username
+        - password
+        - name
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 100
+        password:
+          type: string
+          format: password
+          minLength: 6
+          maxLength: 255
+        name:
+          type: string
+          maxLength: 255
+    UpdateUserRequest:
+      type: object
+      required:
+        - username
+        - name
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 100
+        password:
+          type: string
+          format: password
+          minLength: 6
+          maxLength: 255
+          description: Opsional. Jika kosong atau tidak dikirim, password tidak diubah.
+        name:
+          type: string
+          maxLength: 255
+    UserResponse:
+      type: object
+      required:
+        - uuid
+        - username
+        - name
+      properties:
+        uuid:
+          type: string
+          format: uuid
+        username:
+          type: string
+        name:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+    UserCursorResponse:
+      type: object
+      required:
+        - data
+        - pagination
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserResponse'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+    PaginationMeta:
+      type: object
+      required:
+        - limit
+        - hasNext
+      properties:
+        limit:
+          type: integer
+        hasNext:
+          type: boolean
+        nextCursor:
+          type: string
+          format: uuid
+          nullable: true
     PresignUploadRequest:
       type: object
       required:
@@ -135,3 +346,22 @@ components:
           type: string
         path:
           type: string
+  responses:
+    BadRequest:
+      description: Request tidak valid
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Data tidak ditemukan
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: Konflik data, misalnya username sudah digunakan
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
