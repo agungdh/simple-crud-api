@@ -18,6 +18,20 @@ Dokumen ini adalah pedoman dan instruksi utama bagi seluruh AI Agent (Claude, Ge
 
 ---
 
+## 1.1. Database Table Naming Convention
+
+- **Konvensi**: nama tabel menggunakan **singular** (contoh: `product`, `category`, `order`).
+- **Exception — Reserved Keywords PostgreSQL**: jika nama singular bentrok dengan reserved keyword PostgreSQL, gunakan bentuk lain yang aman. Contoh paling umum:
+  - `user` → gunakan **`users`** (karena `user` adalah reserved keyword di PostgreSQL)
+- **Format**: `snake_case` lowercase.
+- **Dampak ke Entity JPA**: wajib deklarasikan `@Table(name = "...")` secara eksplisit karena Hibernate default-nya plural.
+  ```java
+  @Table(name = "product")   // singular
+  @Table(name = "users")     // exception: reserved keyword
+  ```
+
+---
+
 ## 2. Core Architecture: ID & UUID Standards
 
 ### 2.1. Primary Key (`id`)
@@ -43,7 +57,7 @@ Dokumen ini adalah pedoman dan instruksi utama bagi seluruh AI Agent (Claude, Ge
 
 ### 2.3. Foreign Key & DTO Mapping Rule
 - **Di Database (Physical DB Level)**:
-  - Relasi fisik tetap menggunakan foreign key bertipe `BIGINT` yang mereferensikan `id` tabel induk (contoh: `category_id BIGINT REFERENCES categories(id)` atau nama umum `fk_id`).
+  - Relasi fisik tetap menggunakan foreign key bertipe `BIGINT` yang mereferensikan `id` tabel induk (contoh: `category_id BIGINT REFERENCES category(id)` atau nama umum `fk_id`).
   - Tambahkan B-Tree index pada kolom foreign key untuk performa query JOIN.
 - **Di DTO / API Level (Request & Response)**:
   - Field foreign key diubah dari format `*_id` menjadi `*_uuid` (contoh: `category_uuid`, `user_uuid`, atau `fk_uuid`).
@@ -52,7 +66,7 @@ Dokumen ini adalah pedoman dan instruksi utama bagi seluruh AI Agent (Claude, Ge
   - **Saat Create / Update (Write)**:
     Backend service menerima `*_uuid` dari DTO, melakukan lookup internal untuk mendapatkan `id` (bigint) tabel relasi melalui hash index:
     ```sql
-    SELECT id FROM categories WHERE uuid = :category_uuid
+    SELECT id FROM category WHERE uuid = :category_uuid
     ```
     Lalu menyimpan `category_id` (bigint) tersebut ke database. Jika record tidak ditemukan, kembalikan HTTP 400 / 404 (Entity Not Found).
   - **Saat Fetch / Query (Read)**:
@@ -109,7 +123,7 @@ Karena sistem menggunakan **Soft Delete** (`deleted_at IS NULL` menandakan data 
    - Pada layer entity (Spring Data JPA / Hibernate 6+), **wajib** menggunakan anotasi `@SQLRestriction("deleted_at IS NULL")` pada class entity:
      ```java
      @Entity
-     @Table(name = "products")
+     @Table(name = "product")
      @SQLRestriction("deleted_at IS NULL")
      public class Product {
          // ...
@@ -177,8 +191,8 @@ Berikut adalah contoh standar DDL lengkap untuk tabel baru yang mengimplementasi
 -- 0. Ekstensi Trigram untuk Full/Partial Text Search
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
--- 1. Tabel Utama (contoh: categories)
-CREATE TABLE categories (
+-- 1. Tabel Utama (contoh: category)
+CREATE TABLE category (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     uuid UUID NOT NULL DEFAULT gen_random_uuid(),
     name VARCHAR(100) NOT NULL,
@@ -199,21 +213,21 @@ CREATE TABLE categories (
 );
 
 -- Hash index pada uuid untuk equality lookup cepat O(1)
-CREATE INDEX idx_categories_uuid_hash ON categories USING HASH (uuid);
+CREATE INDEX idx_category_uuid_hash ON category USING HASH (uuid);
 
 -- Partial Unique Index untuk kolom unik pada data aktif (soft delete)
-CREATE UNIQUE INDEX idx_categories_slug_unique_active 
-ON categories (slug) 
+CREATE UNIQUE INDEX idx_category_slug_unique_active 
+ON category (slug) 
 WHERE deleted_at IS NULL;
 
 -- Trigram GIN index pada kolom virtual search_text
-CREATE INDEX idx_categories_search_text_trgm 
-ON categories USING gin (search_text gin_trgm_ops) 
+CREATE INDEX idx_category_search_text_trgm 
+ON category USING gin (search_text gin_trgm_ops) 
 WHERE deleted_at IS NULL;
 
 
--- 2. Tabel Berelasi (contoh: products)
-CREATE TABLE products (
+-- 2. Tabel Berelasi (contoh: product)
+CREATE TABLE product (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     uuid UUID NOT NULL DEFAULT gen_random_uuid(),
     category_id BIGINT NOT NULL,
@@ -234,23 +248,23 @@ CREATE TABLE products (
     deleted_at TIMESTAMPTZ,
     deleted_by BIGINT,
 
-    CONSTRAINT fk_products_category FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE RESTRICT
+    CONSTRAINT fk_product_category FOREIGN KEY (category_id) REFERENCES category(id) ON DELETE RESTRICT
 );
 
 -- Hash index pada uuid produk
-CREATE INDEX idx_products_uuid_hash ON products USING HASH (uuid);
+CREATE INDEX idx_product_uuid_hash ON product USING HASH (uuid);
 
 -- B-Tree index pada foreign key internal untuk optimasi JOIN
-CREATE INDEX idx_products_category_id ON products (category_id);
+CREATE INDEX idx_product_category_id ON product (category_id);
 
 -- Partial Unique Index untuk SKU unik pada produk yang aktif
-CREATE UNIQUE INDEX idx_products_sku_unique_active 
-ON products (sku) 
+CREATE UNIQUE INDEX idx_product_sku_unique_active 
+ON product (sku) 
 WHERE deleted_at IS NULL;
 
 -- Trigram GIN index pada kolom virtual search_text
-CREATE INDEX idx_products_search_text_trgm 
-ON products USING gin (search_text gin_trgm_ops) 
+CREATE INDEX idx_product_search_text_trgm 
+ON product USING gin (search_text gin_trgm_ops) 
 WHERE deleted_at IS NULL;
 ```
 
@@ -676,3 +690,4 @@ public class ProductService {
 11. **Clean Git Commits**: Buat commit message yang jelas, deskriptif, dan fokus pada satu lingkup perubahan.
 12. **API Routing — Tanpa Versioning**: Prefix URL seluruh endpoint adalah `/api` tanpa version segment. Format: `/api/{resource}` (contoh: `/api/users`, `/api/products`). **Dilarang** menggunakan prefix versi seperti `/api/v1/`, `/api/v2/`, dll.
 13. **Password Hashing — BCrypt Wajib**: Setiap field password entitas manapun **wajib** di-encode menggunakan `BCryptPasswordEncoder` sebelum disimpan ke database. Inject `PasswordEncoder` bean (didefinisikan sebagai `@Bean BCryptPasswordEncoder` di konfigurasi) ke service, lalu panggil `passwordEncoder.encode(plainPassword)`. **Dilarang** menyimpan password plain text. Dependency yang digunakan: `org.springframework.security:spring-security-crypto` (tanpa full Spring Security/filter chain).
+14. **Table Naming — Singular**: Nama tabel wajib singular `snake_case` (contoh: `product`, `category`). Exception: jika nama singular adalah reserved keyword PostgreSQL, gunakan bentuk aman lainnya (contoh: `user` → `users`). Wajib deklarasikan `@Table(name = "...")` eksplisit di setiap entity karena Hibernate default-nya plural.
