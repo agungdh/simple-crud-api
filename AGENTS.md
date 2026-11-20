@@ -92,11 +92,36 @@ Setiap tabel entitas utama wajib memiliki 6 kolom audit standar berikut:
 1. **Semua Kolom Nullable**: Kolom audit dibuat tanpa `NOT NULL`.
 2. **Tanpa Nilai Default DB**:
    - **DILARANG** menambahkan `DEFAULT CURRENT_TIMESTAMP` atau default trigger di database.
-   - Seluruh nilai audit **wajib diisi oleh aplikasi** (Spring Boot service layer / auditing listener / context).
+   - Seluruh nilai audit **wajib diisi oleh aplikasi**.
+   - **Timestamp `created_at` / `updated_at`** diisi otomatis lewat JPA lifecycle callback `@PrePersist` / `@PreUpdate` pada entity — **bukan** di-set manual di service layer.
+   - **Kolom `*_by`** (`created_by`, `updated_by`, `deleted_by`) diisi dari principal user yang sedang login. Selama mekanisme autentikasi/login belum tersedia, kolom ini dibiarkan `NULL` dan tidak dipaksakan.
    - *Tujuan*: Memudahkan audit internal, aman ketika import data massal / migrasi data historis tanpa tertimpa default clock database.
 3. **Information Hiding untuk `*_by`**:
    - Kolom `created_by`, `updated_by`, dan `deleted_by` menyimpan `BIGINT` (merujuk ke `id` internal user).
    - Jika informasi pembuat/pengubah perlu dikirim ke Frontend / API, **DILARANG** mengekspos bigint tersebut. Wajib di-resolve dan diekspos sebagai `created_by_uuid`, `updated_by_uuid`, atau `deleted_by_uuid`.
+
+### 3.2.1. Penerapan Timestamp Audit via JPA Lifecycle Callback
+- `created_at` dan `updated_at` diisi otomatis oleh entity melalui `@PrePersist`, lalu `updated_at` di-refresh oleh `@PreUpdate`.
+- Service layer **tidak boleh** memanggil `setCreatedAt(...)` / `setUpdatedAt(...)`.
+- Contoh:
+  ```java
+  @PrePersist
+  void prePersist() {
+      Instant now = Instant.now();
+      if (createdAt == null) {
+          createdAt = now;
+      }
+      if (updatedAt == null) {
+          updatedAt = now;
+      }
+  }
+
+  @PreUpdate
+  void preUpdate() {
+      updatedAt = Instant.now();
+  }
+  ```
+- `deleted_at` tetap di-set eksplisit di service saat operasi soft delete, karena nilainya ditentukan oleh aksi bisnis dan bukan oleh siklus persist/update biasa.
 
 ### 3.3. Soft Delete & Partial Unique Index
 Karena sistem menggunakan **Soft Delete** (`deleted_at IS NULL` menandakan data aktif):
@@ -333,18 +358,14 @@ public class ProductService {
         Long categoryId = categoryRepository.findIdByUuid(request.categoryUuid())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Kategori tidak ditemukan"));
 
-        Instant now = Instant.now();
-
-        // 2. Simpan produk (nilai audit diisi oleh aplikasi)
+        // 2. Simpan produk (createdAt/updatedAt diisi otomatis via @PrePersist)
         Product product = Product.builder()
                 .uuid(UUID.randomUUID())
                 .categoryId(categoryId)
                 .sku(request.sku())
                 .name(request.name())
                 .price(request.price())
-                .createdAt(now)
                 .createdBy(currentUserId)
-                .updatedAt(now)
                 .updatedBy(currentUserId)
                 .build();
         productRepository.save(product);
@@ -634,15 +655,11 @@ public class ProductService {
         Long categoryId = categoryRepository.findIdByUuid(request.categoryUuid())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Kategori tidak ditemukan"));
 
-        Instant now = Instant.now();
-
         // 2. Map DTO ke Entity via MapStruct
         Product product = productMapper.toEntity(request);
         product.setUuid(UUID.randomUUID());
         product.setCategoryId(categoryId);
-        product.setCreatedAt(now);
         product.setCreatedBy(currentUserId);
-        product.setUpdatedAt(now);
         product.setUpdatedBy(currentUserId);
 
         productRepository.save(product);
@@ -658,7 +675,6 @@ public class ProductService {
 
         // Update atribut entity dari Request DTO via MapStruct
         productMapper.updateEntityFromRequest(request, product);
-        product.setUpdatedAt(Instant.now());
         product.setUpdatedBy(currentUserId);
 
         productRepository.save(product);
@@ -721,7 +737,7 @@ public class ProductService {
 
 ## 10. Coding & Git Rules for Agents
 1. **No ID Leakage**: Selalu review seluruh DTO dan Controller agar tidak ada `Long id` atau `id` internal (termasuk `created_by`, `updated_by`, `deleted_by`) yang bocor keluar API. Selalu gunakan `*_uuid`.
-2. **Audit Columns Handled by App**: Semua kolom audit (`created_at`, `created_by`, `updated_at`, `updated_by`, `deleted_at`, `deleted_by`) harus nullable, tanpa DB default, dan nilainya diisi eksplisit oleh aplikasi.
+2. **Audit Columns Handled by App**: Semua kolom audit (`created_at`, `created_by`, `updated_at`, `updated_by`, `deleted_at`, `deleted_by`) harus nullable, tanpa DB default, dan nilainya diisi eksplisit oleh aplikasi. `created_at`/`updated_at` wajib diisi otomatis lewat `@PrePersist`/`@PreUpdate` pada entity, bukan manual di service. Kolom `*_by` diisi dari principal (boleh `NULL` selama autentikasi/login belum tersedia).
 3. **Soft Delete & Partial Unique Indexes**: Setiap constraint unique wajib memakai partial index `WHERE deleted_at IS NULL`.
 4. **SQL Restrict & Soft Delete Isolation**: Seluruh foreign key wajib `ON DELETE RESTRICT`. Pada entity class gunakan `@SQLRestriction("deleted_at IS NULL")` agar record yang di-soft delete tidak pernah bocor/tampil pada query aplikasi.
 5. **Consistent Lombok Usage**: Wajib manfaatkan fitur Lombok yang stabil (`@RequiredArgsConstructor`, `@Slf4j`, `@Getter`, `@Setter`, `@Builder`, dll.) untuk mereduksi boilerplate. Dilarang memakai package `lombok.experimental.*`.
