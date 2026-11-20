@@ -1,0 +1,572 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Temp Upload Test</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b1220;
+    --panel: #111a2b;
+    --panel-2: #16223a;
+    --line: #24344f;
+    --text: #e6edf7;
+    --muted: #93a4bd;
+    --accent: #4f8cff;
+    --accent-2: #7aa7ff;
+    --ok: #35c48b;
+    --err: #ff6b6b;
+    --warn: #f5b955;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: radial-gradient(1200px 600px at 20% -10%, #16223a 0%, var(--bg) 60%);
+    color: var(--text);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    min-height: 100vh;
+  }
+  header { max-width: 980px; margin: 0 auto; padding: 32px 20px 12px; }
+  h1 { margin: 0 0 6px; font-size: 24px; letter-spacing: -0.02em; }
+  header p { margin: 0; color: var(--muted); }
+  main { max-width: 980px; margin: 0 auto; padding: 12px 20px 60px; display: grid; gap: 16px; }
+  .card {
+    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 18px 20px;
+  }
+  .card h2 { margin: 0 0 14px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  label { color: var(--muted); font-size: 13px; }
+  input[type="text"], input[type="number"] {
+    background: #0b1220;
+    border: 1px solid var(--line);
+    color: var(--text);
+    border-radius: 9px;
+    padding: 9px 11px;
+    font: inherit;
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+  input[type="text"]:focus, input[type="number"]:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+  #apiBase { flex: 1; min-width: 220px; }
+  .hint { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+  .drop {
+    border: 2px dashed var(--line);
+    border-radius: 12px;
+    padding: 28px 18px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+    background: rgba(79, 140, 255, 0.03);
+  }
+  .drop:hover, .drop.drag { border-color: var(--accent); background: rgba(79, 140, 255, 0.09); }
+  .drop strong { display: block; margin-bottom: 4px; }
+  .drop span { color: var(--muted); font-size: 13px; }
+  .file-info { margin: 14px 0 0; display: flex; gap: 14px; flex-wrap: wrap; align-items: baseline; }
+  .file-info .name { font-family: var(--mono); font-size: 13px; word-break: break-all; }
+  .file-info .meta { color: var(--muted); font-size: 13px; }
+  .options { margin-top: 16px; display: grid; gap: 10px; }
+  .check { display: flex; gap: 9px; align-items: center; color: var(--text); font-size: 13px; }
+  .check input { width: 16px; height: 16px; accent-color: var(--accent); }
+  .actions { display: flex; gap: 9px; flex-wrap: wrap; margin-top: 16px; }
+  button {
+    border: 1px solid var(--line);
+    background: #1a2942;
+    color: var(--text);
+    border-radius: 9px;
+    padding: 10px 15px;
+    font: inherit;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+    transition: filter .15s, opacity .15s;
+  }
+  button:hover:not(:disabled) { filter: brightness(1.15); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: linear-gradient(180deg, #4f8cff, #3874e8); border-color: #3874e8; color: #fff; }
+  button.danger { background: #40202a; border-color: #6b2b38; color: #ffb3b3; }
+  .progress { height: 9px; border-radius: 99px; background: #0b1220; overflow: hidden; border: 1px solid var(--line); margin-bottom: 14px; }
+  .progress > div { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), #6ee7c8); transition: width .12s linear; }
+  .result { display: grid; gap: 10px; }
+  .result-row { display: grid; grid-template-columns: 120px 1fr; gap: 12px; align-items: start; font-size: 13px; }
+  .result-row > .k { color: var(--muted); padding-top: 1px; }
+  .result-row > .v { font-family: var(--mono); word-break: break-all; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 9px; border-radius: 99px; font-size: 12px; font-weight: 700;
+    font-family: var(--mono);
+  }
+  .badge.ok { background: rgba(53, 196, 139, .14); color: var(--ok); border: 1px solid rgba(53, 196, 139, .35); }
+  .badge.err { background: rgba(255, 107, 107, .13); color: var(--err); border: 1px solid rgba(255, 107, 107, .35); }
+  .badge.warn { background: rgba(245, 185, 85, .13); color: var(--warn); border: 1px solid rgba(245, 185, 85, .35); }
+  .badge.info { background: rgba(79, 140, 255, .14); color: var(--accent-2); border: 1px solid rgba(79, 140, 255, .35); }
+  .copy { padding: 3px 8px; font-size: 11px; border-radius: 6px; }
+  details { border: 1px solid var(--line); border-radius: 9px; padding: 9px 11px; background: rgba(0,0,0,.15); }
+  details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  details code { display: block; margin-top: 7px; font-family: var(--mono); font-size: 11px; line-height: 1.5; word-break: break-all; color: #c8d6ea; }
+  .notice { border: 1px solid rgba(245, 185, 85, .35); background: rgba(245, 185, 85, .09); color: #f7d795; border-radius: 10px; padding: 11px 13px; font-size: 13px; margin-bottom: 12px; }
+  .notice code { font-family: var(--mono); font-size: 12px; }
+  .error-box { border: 1px solid rgba(255, 107, 107, .35); background: rgba(255, 107, 107, .07); border-radius: 10px; padding: 12px 14px; font-size: 13px; }
+  .error-box .title { font-weight: 700; color: var(--err); margin-bottom: 4px; }
+  .error-box code { font-family: var(--mono); font-size: 12px; word-break: break-all; }
+  #log {
+    margin: 0;
+    max-height: 260px;
+    overflow: auto;
+    background: #080e19;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 11px 13px;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.65;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .log-line { display: block; }
+  .log-line.info { color: var(--muted); }
+  .log-line.req { color: var(--accent-2); }
+  .log-line.ok { color: var(--ok); }
+  .log-line.err { color: var(--err); }
+  .empty { color: var(--muted); font-size: 13px; }
+  .sep { height: 1px; background: var(--line); margin: 16px 0; }
+  footer { max-width: 980px; margin: 0 auto; padding: 0 20px 40px; color: var(--muted); font-size: 12px; }
+  footer a { color: var(--accent-2); }
+  @media (max-width: 620px) {
+    .result-row { grid-template-columns: 1fr; gap: 2px; }
+    .result-row > .k { padding-top: 6px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Temp Upload Test</h1>
+  <p>Presign → PUT langsung ke bucket private → object <code>tmp/{uuid}</code>.</p>
+</header>
+
+<main>
+  <div id="fileWarning" class="notice" hidden>
+    Halaman ini dibuka lewat <code>file://</code>. Request ke API akan diblokir CORS.
+    Jalankan dari <code>http://localhost:8080/upload-test.html</code>.
+  </div>
+
+  <section class="card">
+    <h2>1. Koneksi</h2>
+    <div class="row">
+      <label for="apiBase">API base URL</label>
+      <input type="text" id="apiBase" placeholder="(same origin) — mis. http://localhost:8080">
+    </div>
+    <p class="hint">Kosongkan kalau halaman dibuka dari origin yang sama dengan API. Swagger UI: <a href="http://localhost:8085" target="_blank" rel="noreferrer" style="color:var(--accent-2)">http://localhost:8085</a></p>
+  </section>
+
+  <section class="card">
+    <h2>2. File</h2>
+    <div class="drop" id="drop">
+      <strong>Pilih file atau tarik ke sini</strong>
+      <span>Upload dikirim sebagai body mentah (bukan multipart)</span>
+    </div>
+    <input type="file" id="file" hidden>
+    <div class="file-info">
+      <span class="name" id="fileName">Belum ada file</span>
+      <span class="meta" id="fileMeta"></span>
+    </div>
+
+    <div class="options">
+      <label class="check"><input type="checkbox" id="truncate"> Potong body 1 byte saat upload (tes <code>403</code> Content-Length mismatch)</label>
+      <div class="row">
+        <label for="sizeOffset">Presign size offset</label>
+        <input type="number" id="sizeOffset" value="0" step="1" style="width:110px">
+        <span class="hint" style="margin:0">byte, untuk tes ukuran yang tidak cocok</span>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="primary" id="btnUpload">Presign &amp; Upload</button>
+      <button id="btnPresignOnly">Presign saja</button>
+      <button class="danger" id="btnTest413">Tes limit (413)</button>
+      <button id="btnReset">Reset</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>3. Hasil</h2>
+    <div class="progress"><div id="progressBar"></div></div>
+    <div id="result"><p class="empty">Belum ada hasil.</p></div>
+  </section>
+
+  <section class="card">
+    <h2>Log</h2>
+    <pre id="log"></pre>
+    <div class="row" style="margin-top:12px">
+      <label for="maxSize" style="margin:0">Batas maksimum yang diharapkan (MB)</label>
+      <input type="number" id="maxSize" value="100" min="1" step="1" style="width:100px">
+      <span class="hint" style="margin:0">default <code>S3_TEMP_MAX_SIZE=100MB</code></span>
+    </div>
+  </section>
+</main>
+
+<footer>
+  Halaman ini hanya alat bantu testing. Setelah upload, key dapat dicek dengan
+  <code>docker compose exec minio mcli ls --recursive local/priv/tmp/</code>.
+</footer>
+
+<script>
+(() => {
+  'use strict';
+
+  const $ = (id) => document.getElementById(id);
+  const state = { file: null, presign: null, busy: false };
+
+  const $apiBase = $('apiBase');
+  const $file = $('file');
+  const $drop = $('drop');
+  const $log = $('log');
+  const $result = $('result');
+  const $progress = $('progressBar');
+
+  const saved = localStorage.getItem('uploadTest.apiBase');
+  if (saved) $apiBase.value = saved;
+
+  if (location.protocol === 'file:') $('fileWarning').hidden = false;
+
+  function apiBase() {
+    return $apiBase.value.trim().replace(/\/+$/, '');
+  }
+  $apiBase.addEventListener('change', () => {
+    localStorage.setItem('uploadTest.apiBase', apiBase());
+  });
+
+  function fmtBytes(n) {
+    if (!Number.isFinite(n)) return '-';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let value = n;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit += 1;
+    }
+    const shown = unit === 0 ? String(value) : value.toFixed(value < 10 ? 2 : 1);
+    return shown + ' ' + units[unit] + ' (' + n.toLocaleString('en-US') + ' B)';
+  }
+
+  function log(kind, message) {
+    const line = document.createElement('span');
+    const time = new Date().toLocaleTimeString('en-GB', { hour12: false });
+    line.className = 'log-line ' + kind;
+    line.textContent = '[' + time + '] ' + message + '\n';
+    $log.appendChild(line);
+    if ($log.childElementCount > 400) $log.firstElementChild.remove();
+    $log.scrollTop = $log.scrollHeight;
+  }
+
+  function esc(value) {
+    return String(value ?? '').replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[c]);
+  }
+
+  function copyButton(text) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'copy';
+    btn.textContent = 'Copy';
+    btn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(text);
+        btn.textContent = 'Copied';
+        setTimeout(() => { btn.textContent = 'Copy'; }, 1200);
+      } catch (err) {
+        log('err', 'Clipboard tidak tersedia: ' + err.message);
+      }
+    });
+    return btn;
+  }
+
+  function setResult(html) {
+    $result.innerHTML = html;
+  }
+
+  function row(key, value, options = {}) {
+    const text = options.raw ? String(value ?? '') : esc(value);
+    return '<div class="result-row"><div class="k">' + esc(key) + '</div><div class="v">' + text + '</div></div>';
+  }
+
+  function banner(kind, text) {
+    return '<span class="badge ' + kind + '">' + esc(text) + '</span>';
+  }
+
+  function setBusy(busy) {
+    state.busy = busy;
+    ['btnUpload', 'btnPresignOnly', 'btnTest413', 'btnReset'].forEach((id) => {
+      $(id).disabled = busy;
+    });
+  }
+
+  function setProgress(loaded, total) {
+    const pct = total > 0 ? Math.min(100, (loaded / total) * 100) : 0;
+    $progress.style.width = pct.toFixed(2) + '%';
+  }
+
+  function resetProgress() {
+    $progress.style.width = '0%';
+  }
+
+  function chooseFile(file) {
+    state.file = file;
+    state.presign = null;
+    $fileName.textContent = file.name;
+    $fileMeta.textContent = fmtBytes(file.size) + ' • ' + (file.type || 'unknown type');
+    log('info', 'File dipilih: ' + file.name + ' (' + file.size + ' B)');
+  }
+
+  $drop.addEventListener('click', () => $file.click());
+  $file.addEventListener('change', () => {
+    if ($file.files && $file.files[0]) chooseFile($file.files[0]);
+  });
+  ['dragenter', 'dragover'].forEach((evt) => {
+    $drop.addEventListener(evt, (e) => {
+      e.preventDefault();
+      $drop.classList.add('drag');
+    });
+  });
+  ['dragleave', 'drop'].forEach((evt) => {
+    $drop.addEventListener(evt, (e) => {
+      e.preventDefault();
+      $drop.classList.remove('drag');
+    });
+  });
+  $drop.addEventListener('drop', (e) => {
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (file) chooseFile(file);
+  });
+
+  async function presign(size) {
+    const url = apiBase() + '/api/uploads/presign';
+    log('req', 'POST ' + url + ' {"size":' + size + '}');
+    const started = performance.now();
+
+    let response;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ size })
+      });
+    } catch (err) {
+      throw new Error('Network/CORS error: ' + err.message);
+    }
+
+    const text = await response.text();
+    const ms = Math.round(performance.now() - started);
+    log(response.ok ? 'ok' : 'err', 'Presign → ' + response.status + ' ' + response.statusText + ' (' + ms + ' ms) ' + text);
+
+    let body = null;
+    try { body = text ? JSON.parse(text) : null; } catch (_) { /* not JSON */ }
+
+    if (!response.ok) {
+      const err = new Error('Presign gagal: HTTP ' + response.status + (body && body.error ? ' ' + body.error : ''));
+      err.status = response.status;
+      err.body = body;
+      err.raw = text;
+      throw err;
+    }
+    if (!body || !body.uploadUrl) {
+      throw new Error('Response presign tidak berisi uploadUrl');
+    }
+    return body;
+  }
+
+  function put(url, body, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', url);
+      xhr.timeout = 15 * 60 * 1000;
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(e.loaded, e.total);
+      };
+      xhr.onload = () => resolve({
+        status: xhr.status,
+        statusText: xhr.statusText,
+        text: xhr.responseText,
+        etag: xhr.getResponseHeader('ETag')
+      });
+      xhr.onerror = () => reject(new Error('Network/CORS error saat PUT ke object storage'));
+      xhr.ontimeout = () => reject(new Error('Upload timeout setelah 15 menit'));
+      xhr.onabort = () => reject(new Error('Upload dibatalkan'));
+      xhr.send(body);
+    });
+  }
+
+  function showPresign(p) {
+    state.presign = p;
+    const wrap = document.createElement('div');
+    wrap.innerHTML =
+      row('Status', banner('ok', '200 Presign OK'), { raw: true }) +
+      row('Key', '<span>' + esc(p.key) + '</span> ', { raw: true }) +
+      row('Expires in', esc(p.expiresIn) + ' detik') +
+      row('Upload URL', '<details><summary>Lihat presigned URL</summary><code>' + esc(p.uploadUrl) + '</code></details>', { raw: true });
+    wrap.querySelector('.result-row:nth-child(2) .v').appendChild(copyButton(p.key));
+    setResult('');
+    $result.appendChild(wrap);
+  }
+
+  function showError(err) {
+    const status = err.status || '-';
+    let hint = '';
+    if (err.status === 413) {
+      hint = 'Ukuran melebihi batas. Naikkan lewat env <code>S3_TEMP_MAX_SIZE</code> atau kirim size lebih kecil.';
+    } else if (err.status === 400) {
+      hint = 'Pastikan <code>size</code> berupa integer &gt; 0.';
+    } else if (err.status === 403) {
+      hint = 'Content-Length tidak sama dengan <code>size</code> yang di-presign, atau URL sudah expired.';
+    } else if (String(err.message).includes('Network/CORS')) {
+      hint = 'Cek origin halaman, CORS API (<code>app.cors.allowed-origins</code>), dan CORS bucket.';
+    }
+    setResult(
+      '<div class="error-box"><div class="title">Gagal</div>' +
+      row('HTTP', esc(status)) +
+      row('Pesan', esc(err.message)) +
+      (err.raw ? row('Response', '<details><summary>Lihat body</summary><code>' + esc(err.raw) + '</code></details>', { raw: true }) : '') +
+      (hint ? '<p class="hint" style="margin-top:10px">' + hint + '</p>' : '') +
+      '</div>'
+    );
+  }
+
+  async function run(presignOnly) {
+    if (state.busy) return;
+    if (!state.file) {
+      log('err', 'Pilih file terlebih dahulu.');
+      setResult('<p class="empty">Pilih file terlebih dahulu.</p>');
+      return;
+    }
+
+    setBusy(true);
+    resetProgress();
+    setResult('<p class="empty">Memproses…</p>');
+
+    const file = state.file;
+    const truncate = $('truncate').checked;
+    const offset = Number($('sizeOffset').value || 0);
+    const presignSize = Math.max(1, file.size + offset);
+
+    try {
+      log('info', 'Presign size: ' + presignSize + ' B (file ' + file.size + ' B, offset ' + offset + ')');
+      const p = await presign(presignSize);
+      showPresign(p);
+
+      if (presignOnly) {
+        log('ok', 'Presign saja selesai. URL berlaku ' + p.expiresIn + ' detik.');
+        return;
+      }
+
+      const body = truncate ? file.slice(0, Math.max(0, file.size - 1)) : file;
+      log('info', 'PUT ke object storage, body ' + body.size + ' B' + (truncate ? ' (sengaja dipotong 1 B)' : ''));
+      const started = performance.now();
+      const res = await put(p.uploadUrl, body, (loaded, total) => {
+        setProgress(loaded, total);
+        const pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
+        document.title = pct + '% — Temp Upload Test';
+      });
+      const ms = Math.round(performance.now() - started);
+
+      if (res.status >= 200 && res.status < 300) {
+        setProgress(body.size, body.size);
+        const wrap = document.createElement('div');
+        wrap.innerHTML =
+          row('Status', banner('ok', res.status + ' ' + res.statusText), { raw: true }) +
+          row('Key', '<span>' + esc(p.key) + '</span> ', { raw: true }) +
+          row('Ukuran', esc(fmtBytes(body.size))) +
+          row('Durasi', esc(ms) + ' ms') +
+          row('ETag', esc(res.etag || 'tidak diekspos CORS')) +
+          row('Upload URL', '<details><summary>Lihat presigned URL</summary><code>' + esc(p.uploadUrl) + '</code></details>', { raw: true });
+        wrap.querySelector('.result-row:nth-child(2) .v').appendChild(copyButton(p.key));
+        setResult('');
+        $result.appendChild(wrap);
+        log('ok', 'Upload sukses HTTP ' + res.status + ' dalam ' + ms + ' ms. Simpan key: ' + p.key);
+        log('info', 'Cek object: docker compose exec minio mcli ls --recursive local/priv/tmp/');
+      } else {
+        let hint = '';
+        if (res.status === 403) {
+          hint = 'Signature mismatch: Content-Length (' + body.size + ' B) tidak sama dengan size yang di-presign (' + presignSize + ' B), atau URL expired.';
+        }
+        setResult(
+          '<div class="error-box"><div class="title">Upload ditolak</div>' +
+          row('Status', banner('err', res.status + ' ' + res.statusText), { raw: true }) +
+          row('Body', '<code>' + esc((res.text || '(kosong)').slice(0, 1200)) + '</code>', { raw: true }) +
+          (hint ? '<p class="hint" style="margin-top:10px">' + esc(hint) + '</p>' : '') +
+          '</div>'
+        );
+        log('err', 'Upload gagal HTTP ' + res.status + ' ' + res.statusText + ' ' + (res.text || ''));
+      }
+    } catch (err) {
+      log('err', err.message);
+      showError(err);
+    } finally {
+      setBusy(false);
+      document.title = 'Temp Upload Test';
+    }
+  }
+
+  async function testLimit() {
+    if (state.busy) return;
+    setBusy(true);
+    resetProgress();
+    setResult('<p class="empty">Menguji batas maksimum…</p>');
+    const mb = Math.max(1, Number($('maxSize').value || 100));
+    const size = Math.round(mb * 1024 * 1024) + 1;
+
+    try {
+      const p = await presign(size);
+      setResult(
+        '<div class="error-box"><div class="title">Tidak ditolak</div>' +
+        row('Presign size', esc(size + ' B')) +
+        row('Hasil', banner('warn', '200 OK — limit belum aktif'), { raw: true }) +
+        row('Key', esc(p.key)) +
+        '<p class="hint" style="margin-top:10px">Server masih membuat URL untuk ' + esc(fmtBytes(size)) +
+        '. Cek <code>S3_TEMP_MAX_SIZE</code> dan pastikan aplikasi sudah di-restart.</p></div>'
+      );
+      log('err', 'Presign ' + size + ' B diterima (200). Batas maksimum tidak terpasang?');
+    } catch (err) {
+      if (err.status === 413) {
+        setResult(
+          '<div class="result">' + row('Status', banner('ok', '413 Content Too Large — sesuai harapan'), { raw: true }) +
+          row('Presign size', esc(size + ' B')) +
+          row('Response', '<details><summary>Lihat body</summary><code>' + esc(err.raw || '') + '</code></details>', { raw: true }) +
+          '</div>'
+        );
+        log('ok', 'Size ' + size + ' B ditolak dengan 413 — batas maksimum bekerja.');
+      } else {
+        showError(err);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  $('btnUpload').addEventListener('click', () => run(false));
+  $('btnPresignOnly').addEventListener('click', () => run(true));
+  $('btnTest413').addEventListener('click', testLimit);
+  $('btnReset').addEventListener('click', () => {
+    state.file = null;
+    state.presign = null;
+    $file.value = '';
+    $fileName.textContent = 'Belum ada file';
+    $fileMeta.textContent = '';
+    $('truncate').checked = false;
+    $('sizeOffset').value = '0';
+    $log.textContent = '';
+    resetProgress();
+    setResult('<p class="empty">Belum ada hasil.</p>');
+    log('info', 'Reset. Siap untuk percobaan baru.');
+  });
+
+  log('info', 'Halaman siap. Origin: ' + location.origin);
+  log('info', 'API base: ' + (apiBase() || '(same origin)'));
+})();
+</script>
+</body>
+</html>
