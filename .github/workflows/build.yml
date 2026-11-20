@@ -33,3 +33,20 @@ jobs:
 
       - name: Build
         run: ./gradlew build -x test --no-daemon
+
+      - name: Report JAR Size
+        run: |
+          echo "=== JAR Files ==="
+          ls -lh build/libs/*.jar
+          
+          if [ -n "$GITHUB_STEP_SUMMARY" ]; then
+            echo "### 📦 Build Artifacts" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "| File | Size | Bytes |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| --- | --- | --- |" >> "$GITHUB_STEP_SUMMARY"
+            for f in build/libs/*.jar; do
+              size=$(ls -lh "$f" | awk '{print $5}')
+              bytes=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f")
+              echo "| \`$(basename "$f")\` | **$size** | \`$bytes\` |" >> "$GITHUB_STEP_SUMMARY"
+            done
+          fi
